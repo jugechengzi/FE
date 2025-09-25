@@ -1,0 +1,1 @@
+from .rect_main import apply_rect_to_model

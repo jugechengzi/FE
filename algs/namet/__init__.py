@@ -1,0 +1,1 @@
+from .namet_main import apply_namet_to_model

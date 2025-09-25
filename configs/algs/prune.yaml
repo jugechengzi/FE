@@ -1,0 +1,4 @@
+name: prune
+add_old_keys: True
+L2: 0
+reduce_type: log

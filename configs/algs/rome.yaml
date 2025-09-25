@@ -1,0 +1,3 @@
+name: rome
+add_old_keys: True
+inv_coef: 0.1 #1e-5就可以了，但是我也要尝试0.1和emmet一样，否则比较不公平，我才发现这一点，他妈地。

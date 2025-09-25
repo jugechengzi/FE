@@ -1,0 +1,33 @@
+defaults:
+  - algs: memit
+  - llms: llama3-8b
+
+seed: 0
+gpu: 0
+model_dtype: bfloat16 #choices=["auto","float32","bfloat16"]
+bs: 100
+data: multi_counterfact_20877 #choices=[multi_counterfact_20877,zsre_mend_eval_19086,wiki_cf_2266,mquake_cf_9218, counterfact_2000]
+lti: False
+num_edits: 2000
+test_only: False
+tf_props: False
+inversion_tf: False
+unlearning_ab: False
+negetive_prompt_test: False
+topk: True
+debug_mode: False #edit a small number of samples, for debug only,
+#it will not save model, you can ignore it.
+c_edit: False #continue to edit from previous edited model, you must ensure the previous checkpoint exists.
+
+save_name: default #the prefix of the name of saved model, {dataset}-{save_name}-{model_name}.pt
+#format of save_name: 2000-bs100
+load_name: default #the prefix of the name of saved model to be loaded, {dataset}-{load_name}-{model_name}.pt
+#format of save_name: 2000-bs100
+data_dir: /home/weiliu/student/xhm/data
+results_dir: /home/weiliu/student/xhm/edit-result-final #per alg
+cache_dir: /home/weiliu/student/xhm/edit-cache-final #per llm
+
+lw_eval: True
+lbq_eval: False
+
+

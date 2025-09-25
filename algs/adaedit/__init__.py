@@ -1,0 +1,1 @@
+from .adaedit_main import apply_adaedit_to_model
