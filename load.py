@@ -8,7 +8,7 @@ def load_data(cfg):
         data_file=cfg.data_dir+"/"+cfg.data
     else:
         data_file = cfg.data_dir+"/"+ cfg.data+".json"
-    if cfg.negetive_prompt_test:
+    if cfg.negetive_prompt_test and not cfg.target_true_test:
         if cfg.data=="multi_counterfact_20877":
             data_file = cfg.data_dir+"/mcf_negetive_prompt.json"
             print("load mcf_negetive_prompt.json......")
@@ -23,6 +23,8 @@ def load_data(cfg):
             print("load zsre_negetive_prompt.json......")
         else:
             raise ValueError("{} has no negetive prompt.".format(cfg.data))
+    if cfg.target_true_test:
+        data_file = cfg.data_dir + "/" + cfg.data + cfg.target_true_file_suffix + ".json"
     with open(data_file, "r") as f:
         data = json.load(f)
     if cfg.algs.name == "wise":
@@ -41,7 +43,7 @@ def load_data(cfg):
     else:
         data=data[:cfg.num_edits]
     if cfg.negetive_prompt_test:
-        for i in range(cfg.num_edits):
+        for i in range(len(data)):
             negetive_prompt = data[i]["negetive_prompt"]
             subject = data[i]["subject"]
             if subject not in negetive_prompt:

@@ -113,11 +113,18 @@ def eval_counterfact(
         paraphrase_prompts,
         neighborhood_prompts,
     ]
-    which_correct = [
-        [0 for _ in range(len(rewrite_prompts))],
-        [0 for _ in range(len(paraphrase_prompts))],
-        [1 for _ in range(len(neighborhood_prompts))],
-    ]
+    if cfg.target_true_test:
+        which_correct = [
+            [1 for _ in range(len(rewrite_prompts))],
+            [1 for _ in range(len(paraphrase_prompts))],
+            [1 for _ in range(len(neighborhood_prompts))],
+        ]
+    else:
+        which_correct = [
+            [0 for _ in range(len(rewrite_prompts))],
+            [0 for _ in range(len(paraphrase_prompts))],
+            [1 for _ in range(len(neighborhood_prompts))],
+        ]
     keys=["rewrite_prompts","paraphrase_prompts","neighborhood_prompts"]
     if cfg.negetive_prompt_test:
         keys[0] = "rewrite_negetive_prompts"

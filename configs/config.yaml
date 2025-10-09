@@ -14,6 +14,9 @@ tf_props: False
 inversion_tf: False
 unlearning_ab: False
 negetive_prompt_test: False
+target_true_test: False
+target_true_file_suffix: "_filtered" #"_filtered" or "_auto_corrected"
+target_auto_corrected_test: False
 topk: True
 debug_mode: False #edit a small number of samples, for debug only,
 #it will not save model, you can ignore it.

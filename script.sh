@@ -1,12 +1,14 @@
 #multi_counterfact_20877,zsre_mend_eval_19086,wiki_cf_2266,mquake_cf_9218,counterfact_2000
-CUDA_VISIBLE_DEVICES=3 nohup python main.py llms=glm4-9b algs=rect data=multi_counterfact_20877 > ./outputs/rect_glm4_m.out &
+#旧知识准确率测试 _filtered _auto_corrected
+CUDA_VISIBLE_DEVICES=1 nohup python main.py llms=qwen2.5-7b target_true_file_suffix="_auto_corrected_qw" lw_eval=False \
+ save_name="target_true_test_auto_corrected" data=multi_counterfact_20877 target_true_test=True target_auto_corrected=True test_only=True > nohup_m.out &
 
 #test_only=True negetive_prompt_test=True gpu=3 lw_eval=False data=wiki_cf_2266 model_dtype=bfloat16
 #正编辑反评测
-CUDA_VISIBLE_DEVICES=2 nohup python main.py  algs=alphaedit llms=qwen2.5-7b gpu=0 test_only=True negetive_prompt_test=True save_name="negetive_float32_new" load_name="float32_new" \
- lw_eval=False data=wiki_cf_2266 > nohup.out &
+CUDA_VISIBLE_DEVICES=3 nohup python main.py llms=qwen2.5-7b target_true_file_suffix="_auto_corrected_qw" save_name="negetive_target_true_test_auto_corrected" \
+ lw_eval=False data=mquake_cf_9218 test_only=True negetive_prompt_test=True target_true_test=True > nohup_w.out &
 
-CUDA_VISIBLE_DEVICES=1 nohup python main.py  algs=memit llms=llama3-8b gpu=0 test_only=True negetive_prompt_test=True save_name="negetive_last_k" load_name="last_k" \
+CUDA_VISIBLE_DEVICES=1 nohup python main.py  algs=memit llms=llama3-8b gpu=0 test_only=True save_name="test" \
  lw_eval=False data=multi_counterfact_20877 > nohup.out &
 
 
