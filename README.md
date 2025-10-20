@@ -1,4 +1,4 @@
 # me
 
-The code for our improved implementation of baseline methods are in the "algs" directory.
+The code for our improved implementation of baseline methods and datasets are in the "algs" directory.
 
