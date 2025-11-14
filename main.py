@@ -17,6 +17,7 @@ from algs.pmet import apply_pmet_to_model
 from algs.adaedit import apply_adaedit_to_model
 from algs.wise import apply_wise_to_model
 from algs.ft import apply_ft_to_model
+from algs.rledit import apply_rledit_to_model
 from datetime import datetime
 
 from load import load_model,load_data,save_model
@@ -36,12 +37,18 @@ ALG_DICT = {
     "rome": apply_rome_to_model,
     "emmet": apply_emmet_to_model,
     "namet": apply_namet_to_model,
+    "namet_nok0": apply_namet_to_model,
     "rect": apply_rect_to_model,
+    "rect_nok0": apply_rect_to_model,
     "prune": apply_prune_to_model,
+    "prune_nok0": apply_prune_to_model,
     "pmet": apply_pmet_to_model,
+    "pmet_nok0": apply_pmet_to_model,
     "adaedit": apply_adaedit_to_model,
+    "adaedit_nok0": apply_adaedit_to_model,
     "wise": apply_wise_to_model,
-    "ft": apply_ft_to_model
+    "ft": apply_ft_to_model,
+    "rledit": apply_rledit_to_model,
 }
 
 MODELSCOPE_PATH = "/home/liubingqing/.cache/modelscope/LLM-Research/"
@@ -212,6 +219,18 @@ def main(cfg: DictConfig) -> None:
                 f.write("\n\n")
                 json.dump(pre_metrics, f, ensure_ascii=False, indent=2)
                 f.write("\n\n")
+            if cfg.neighborhood_logits:
+                if cfg.data == "zsre_mend_eval_19086":
+                    from evals.zsre import target_true_logits,target_new_logits
+                else:
+                    from evals.counterfact import target_true_logits,target_new_logits
+                logits_dict = {
+                    "target_true_logits": target_true_logits,
+                    "target_new_logits": target_new_logits
+                }
+                torch.save(logits_dict, pre_results_file + "_neighborhood_target_logits.pt")
+                target_true_logits.clear()
+                target_new_logits.clear()
             print("End Evaluating the Original Model")
             if cfg.lw_eval:
                 file=cfg.results_dir+"/lw_eval/"+cfg.llms.name.replace("/", "-")+"/"+cfg.data+"/pred_lw_eval.npy"
@@ -237,6 +256,16 @@ def main(cfg: DictConfig) -> None:
             json.dump(post_metrics, f, ensure_ascii=False, indent=2)
             f.write("\n\n")
         print("End Evaluating the Edited Model")
+        if cfg.neighborhood_logits:
+            if cfg.data == "zsre_mend_eval_19086":
+                from evals.zsre import target_true_logits,target_new_logits
+            else:
+                from evals.counterfact import target_true_logits,target_new_logits
+            logits_dict = {
+                "target_true_logits": target_true_logits,
+                "target_new_logits": target_new_logits
+            }
+            torch.save(logits_dict, post_results_file + "_neighborhood_target_logits.pt")
         if cfg.lw_eval:
             file = cfg.results_dir+"/lw_eval/"+cfg.llms.name.replace("/", "-") + "/" + cfg.data+"/"+cfg.algs.name + "/pred_lw_eval.npy"
             file_orders = cfg.results_dir+"/lw_eval/"+cfg.llms.name.replace("/", "-") + "/" + cfg.data+"/"+cfg.algs.name + "/abcd_orders.npy"
@@ -262,22 +291,3 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-
-    # data = [{"subject": "Taylor Swift",
-    #          "prompt": "Which country was {} born?",
-    #          "target_new": "The United Kingdom",
-    #          "target_true": "The United States"},
-    #         {"subject": "Watts Humphrey",
-    #          "prompt": "What university did {} attend?",
-    #          "target_new": "University of Michigan",
-    #          "target_true": "Illinois Institute of Technology"},
-    #         {"subject": "Danielle Darrieux",
-    #          "prompt": "The mother tongue of {} is",
-    #          "target_new": "English",
-    #          "target_true": "French"},
-    #         {
-    #             "subject": "Edwin of Northumbria",
-    #             "prompt": "The official religion of {} is",
-    #             "target_new": "Islam",
-    #             "target_true": "Christianity"}
-    #         ]

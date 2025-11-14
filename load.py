@@ -56,7 +56,7 @@ def load_model(model,cfg):
     if cfg.algs.name == 'wise':
         device = f'cuda:{cfg.gpu}'
         editor = WISE.WISE(model=model, config=cfg.llms, device=device)
-        # editor.load(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.save_name}-{cfg.llms.name.replace("/", "-")}.pt")
+        editor.load(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.save_name}-{cfg.llms.name.replace("/", "-")}.pt")
         return editor
     weights_file = weights_dir + "/{}/{}-{}-{}.pt".format(cfg.algs.name, cfg.data, cfg.load_name,
                                                           cfg.llms.name.replace("/", "-"))
@@ -73,12 +73,20 @@ def save_model(model,cfg):
     if cfg.algs.name == 'wise':
         model.save(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.save_name}-{cfg.llms.name.replace("/", "-")}.pt")
         return
-    weights = {
-        f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight": nethook.get_parameter(
-            model, f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight"
-        ).cpu()
-        for layer in cfg.llms.layers
-    }
+    if cfg.algs.name == 'rledit':
+        weights = {
+            f"{edite_module}.weight": nethook.get_parameter(
+                model, f"{edite_module}.weight"
+            ).cpu()
+            for edite_module in cfg.llms.edit_modules
+        }
+    else:
+        weights = {
+            f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight": nethook.get_parameter(
+                model, f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight"
+            ).cpu()
+            for layer in cfg.llms.layers
+        }
     weights_file = weights_dir + "/{}/{}-{}-{}.pt".format(cfg.algs.name, cfg.data, cfg.save_name,
                                                           cfg.llms.name.replace("/", "-"))
     ensure_file_directory(weights_file)

@@ -49,6 +49,28 @@ midlayers:
 constr_pos: subject
 #### for LTI end ####
 
+#### for RLEdit start ####
+edit_modules:
+- model.layers.22.mlp.gate_proj
+- model.layers.23.mlp.gate_proj
+- model.layers.24.mlp.gate_proj
+- model.layers.25.mlp.gate_proj
+- model.layers.26.mlp.gate_proj
+- model.layers.27.mlp.gate_proj
+- model.layers.28.mlp.gate_proj
+- model.layers.29.mlp.gate_proj
+- model.layers.30.mlp.gate_proj
+- model.layers.22.mlp.up_proj
+- model.layers.23.mlp.up_proj
+- model.layers.24.mlp.up_proj
+- model.layers.25.mlp.up_proj
+- model.layers.26.mlp.up_proj
+- model.layers.27.mlp.up_proj
+- model.layers.28.mlp.up_proj
+- model.layers.29.mlp.up_proj
+- model.layers.30.mlp.up_proj
+#### for RLEdit end ####
+
 clamp_norm_factor: 0.75
 v_num_grad_steps: 25
 v_lr: 0.1
@@ -77,6 +99,7 @@ attn_module_tmp: model.layers.{}.self_attn
 ln_f_module: model.norm
 lm_head_module: lm_head
 
+# mom2_dataset: /home/weiliu/student/xhm/data/locality_data_zsre.json
 mom2_dataset: wikipedia
 mom2_n_samples: 100000
 mom2_dtype: float32
