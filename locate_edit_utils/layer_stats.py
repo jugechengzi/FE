@@ -39,6 +39,8 @@ def layer_stats(
         batch_tokens=None,
         progress=tqdm,
         force_recompute=False,
+        cache_filename_suffix="",
+        random_sample=1
 ):
     """
     Function to load or compute cached stats.
@@ -49,11 +51,14 @@ def layer_stats(
         # from datasets import Dataset
         # raw_ds = Dataset.from_file('data/wikipedia-train.arrow')
         # raw_ds = {'train': raw_ds}
-        raw_ds = load_dataset(
-            ds_name,
-            # dict(wikitext="wikitext-103-raw-v1", wikipedia="20200501.en")[ds_name]
-            dict(wikitext="wikitext-103-raw-v1", wikipedia="20220301.en")[ds_name]
-        )
+        if ds_name in ["wikipedia", "wikitext"]:
+            raw_ds = load_dataset(
+                ds_name,
+                # dict(wikitext="wikitext-103-raw-v1", wikipedia="20200501.en")[ds_name]
+                dict(wikitext="wikitext-103-raw-v1", wikipedia="20220301.en")[ds_name]
+            )
+        else:
+            raw_ds = load_dataset("json", data_files={"train": ds_name})
         return TokenizedDataset(raw_ds["train"], tokenizer, maxlen=maxlen)
 
     # Continue with computation of statistics
@@ -73,7 +78,9 @@ def layer_stats(
         precision = "float64"
     dtype = getattr(torch, precision)
     # stats_dir = Path(stats_dir)
-    filename=cfg.cache_dir+"/stats/"+cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + ".npz"
+    filename=cfg.cache_dir+"/stats/"+cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cache_filename_suffix + ".npz"
+    if cache_filename_suffix == "local":
+        sample_indices_filename=cfg.cache_dir+"/stats/"+cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + "-local-sample-indices.npz"
     # file_extension = f"{model_name}/{ds_name}_stats/{layer_name}_{precision}_{'-'.join(sorted(to_collect))}{size_suffix}.npz"
     # filename = stats_dir / file_extension
 
@@ -84,7 +91,7 @@ def layer_stats(
         progress = lambda x: x
 
     stat = CombinedStat(**{k: STAT_TYPES[k]() for k in to_collect})
-    loader = tally(
+    tally_loader = tally(
         stat,
         ds,
         cache=(filename if not force_recompute else None),
@@ -92,9 +99,17 @@ def layer_stats(
         batch_size=batch_size,
         collate_fn=length_collation(batch_tokens),
         pin_memory=True,
-        random_sample=1,
-        num_workers=2,
+        random_sample=random_sample,
+        num_workers=4,
     )
+    if not isinstance(tally_loader, tuple):
+        loader = tally_loader
+    else:
+        loader = tally_loader[0]
+        ori_loader = tally_loader[1]
+        if cache_filename_suffix == "local" and not os.path.exists(sample_indices_filename) and ds is not None:
+            # save the sampled indices
+            numpy.savez(sample_indices_filename, sample_indices=numpy.array(list(ori_loader.sampler)))
     batch_count = -(-(sample_size or len(ds)) // batch_size)
     with torch.no_grad():
         for batch_group in progress(loader, total=batch_count):
@@ -106,6 +121,9 @@ def layer_stats(
                     model(**batch)
                 feats = flatten_masked_batch(tr.input, batch["attention_mask"])
                 # feats = flatten_masked_batch(tr.output, batch["attention_mask"])
+                if "normlize" in cache_filename_suffix:
+                    import torch.nn.functional as F
+                    feats = F.normalize(feats, p=2, dim=-1)
                 feats = feats.to(dtype=dtype)
                 stat.add(feats)
     return stat
@@ -120,6 +138,8 @@ def get_cov(
     mom2_dtype: str,
     inv: bool = False,
     force_recompute: bool = False,
+    cache_filename_suffix="",
+    random_sample=1
 ) -> torch.Tensor:
     """
     Retrieves covariance statistics, then computes the algebraic inverse.
@@ -142,6 +162,8 @@ def get_cov(
         precision=mom2_dtype,
         batch_tokens=cfg.llms.mom2_maxseqlen,
         force_recompute=force_recompute,
+        cache_filename_suffix=cache_filename_suffix,
+        random_sample=random_sample
     )
     cov=stat.mom2.moment()
     return (

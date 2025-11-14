@@ -1,0 +1,4 @@
+name: rect_nok0
+add_old_keys: True
+L2: 10
+zero_prob: 0.4 #也就是60%留下，40%置为0

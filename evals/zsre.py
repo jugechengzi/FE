@@ -15,6 +15,9 @@ from omegaconf import DictConfig
 from evals.lweval import lw_eval, true_false_probs
 from evals.lbqeval import lbq_eval
 
+target_true_logits = []
+target_new_logits = []
+
 def get_prompt_target_pairs(tok,model,prompt,target):#这里有待检查一下。
     prompts, targets=[],[]
     target_tok = tok(" " + target,add_special_tokens=False)["input_ids"]#编辑目标，这涉及到多个token的精确匹配。
@@ -63,14 +66,21 @@ def eval_zsre(
     paraphrase_prompts,paraphrase_targets=get_prompt_target_pairs(tok,model,paraphrase_prompts[0],target_new)
     neighborhood_prompts,neighborhood_targets=get_prompt_target_pairs(tok,model,neighborhood_prompts[0],neighborhood_answer[0])
 
-    prompts=rewrite_prompts+paraphrase_prompts+neighborhood_prompts
-    targets=rewrite_targets+paraphrase_targets+neighborhood_targets
+    if cfg.neighborhood_logits:
+        prompts=neighborhood_prompts
+        targets=neighborhood_targets
+        keys=["neighborhood_prompts_correct"]
+        strict_keys=["neighborhood_strict_correct"]
+        cut_offs=np.cumsum([0,len(neighborhood_targets)])
+    else:
+        prompts=rewrite_prompts+paraphrase_prompts+neighborhood_prompts
+        targets=rewrite_targets+paraphrase_targets+neighborhood_targets
+        keys=["rewrite_prompts_correct","paraphrase_prompts_correct","neighborhood_prompts_correct"]
+        strict_keys=["rewrite_strict_correct","paraphrase_strict_correct","neighborhood_strict_correct"]
+        cut_offs=np.cumsum([0,len(rewrite_targets),len(paraphrase_targets),len(neighborhood_targets)])
     metrics_detail = test_batch_prediction_acc(model, tok, prompts, targets)#对于llama3-8b,float32,zsre，需要39/40GB的评估，注意。
-    cut_offs=np.cumsum([0,len(rewrite_targets),len(paraphrase_targets),len(neighborhood_targets)])
-    keys=["rewrite_prompts_correct","paraphrase_prompts_correct","neighborhood_prompts_correct"]
     if cfg.negetive_prompt_test:
         keys[0] = "rewrite_negetive_prompts"
-    strict_keys=["rewrite_strict_correct","paraphrase_strict_correct","neighborhood_strict_correct"]
     metrics={}
     for i in range(len(keys)):
         start=cut_offs[i]
@@ -90,6 +100,7 @@ def eval_zsre(
 
 
 def test_batch_prediction_acc(model, tok, prompts: typing.List[str], target):
+    global target_true_logits
     device=next(model.parameters()).device
     prompt_tok = tok(
         prompts,
@@ -104,6 +115,7 @@ def test_batch_prediction_acc(model, tok, prompts: typing.List[str], target):
         gathered = torch.gather(logits, 1, to_gather).squeeze(1)#[bs,vocab_size]取出下一个单词的预测概率
         ans = torch.argmax(gathered, dim=1)#[bs]查看预测概率最大的那个token。
 
+        target_true_logits.append(gathered.cpu().tolist())
         correct_id = tok(target, padding=True, return_tensors="pt",
                          add_special_tokens=False).to(device)["input_ids"]#这个和ans对应，ans是预测的，而correct_id是正确的。
         # Temporary hack to deal with foreign characters.

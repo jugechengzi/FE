@@ -118,7 +118,7 @@ def tally(stat, dataset, cache=None, quiet=False, **kwargs):
         if cache is not None:
             save_cached_state(cache, stat, args)
 
-    return wrapped_loader()
+    return wrapped_loader(), loader
 
 
 class cache_load_enabled:
@@ -503,7 +503,7 @@ class SecondMoment(Stat):
         return dict(
             constructor=self.__module__ + "." + self.__class__.__name__ + "()",
             count=self.count,
-            mom2=self.mom2.cpu().numpy(),
+            mom2=self.mom2.cpu().float().numpy(),
         )
 
     def load_state_dict(self, state):

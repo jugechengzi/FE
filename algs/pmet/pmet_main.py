@@ -31,6 +31,7 @@ def load_cov(cfg,model,tok):
             cfg.llms.mom2_n_samples,
             cfg.llms.mom2_dtype,
             force_recompute=False,
+            cache_filename_suffix=cfg.cache_filename_suffix
         )
         covs.append(cov)
 
@@ -65,7 +66,7 @@ def apply_pmet_to_model(
     layers=cfg.llms.layers
     #查看KKT是否已经计算好。
     for i, layer in enumerate(layers):
-        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + ".npz"
+        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + "-local.npz"
         ensure_file_directory(Cpathi)
         if not os.path.exists(Cpathi):#then compute
             print("The key matrix of old memory K0K0T for model {} layer {} "
@@ -79,6 +80,7 @@ def apply_pmet_to_model(
                 cfg.llms.mom2_n_samples,
                 cfg.llms.mom2_dtype,
                 force_recompute=False,
+                cache_filename_suffix=cfg.cache_filename_suffix
             )
             #这个内部会自动保存，我们不需要再额外管。
     load_cov(cfg,model,tok)
@@ -155,12 +157,19 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
         cov = covs[i]
         upd_type = torch.float
 
-        coef=cfg.llms.mom2_update_weight[i]
-        upd_matrix = torch.linalg.solve(
-            layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+coef*cov.to(device)+
-            cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
-            layer_ks.to(upd_type) @ resid.T,
-        )
+        if cfg.algs.L2 != 0:
+            upd_matrix = torch.linalg.solve(
+                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+
+                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
+                layer_ks.to(upd_type) @ resid.T,
+            )
+        else:
+            coef=cfg.llms.mom2_update_weight[i]
+            upd_matrix = torch.linalg.solve(
+                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+coef*cov.to(device)+
+                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
+                layer_ks.to(upd_type) @ resid.T,
+            )
         if cfg.algs.add_old_keys:
             cache_c[i, :, :] += (layer_ks @ layer_ks.T).cpu()
         # Adjust update matrix shape

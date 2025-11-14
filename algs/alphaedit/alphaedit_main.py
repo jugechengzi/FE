@@ -20,7 +20,7 @@ from util.utility import ensure_file_directory
 def load_project(cfg):
     for i, layer in enumerate(cfg.llms.layers):
         print(f"\n\nLAYER {layer}\n")
-        Ppathi = cfg.cache_dir + "/null_space_project/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + ".pt"
+        Ppathi = cfg.cache_dir + "/null_space_project/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cfg.cache_filename_suffix + ".pt"
         Pi = torch.load(Ppathi,map_location="cpu")  #这个矩阵通常是比较大的，比如1-2个G，多个层那么就多个G，先放在cpu上，然后按需放在gpu上。
         Ps.append(Pi)
 
@@ -53,7 +53,7 @@ def apply_alphaedit_to_model(
     layers=cfg.llms.layers
     # compute the null space project P.
     for i, layer in enumerate(layers):
-        Ppathi = cfg.cache_dir + "/null_space_project/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + ".pt"
+        Ppathi = cfg.cache_dir + "/null_space_project/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cfg.cache_filename_suffix + ".pt"
         ensure_file_directory(Ppathi)
         if not os.path.exists(Ppathi):#then compute
             print("The null-space projection matrix P for model {} layer {} "
@@ -182,6 +182,7 @@ def get_project(model, tok, layer, cfg):
         cfg.llms.mom2_n_samples,
         cfg.llms.mom2_dtype,
         force_recompute=force_recompute,
+        cache_filename_suffix=cfg.cache_filename_suffix
     )
     U, S, _ = torch.linalg.svd(cov.to(device), full_matrices=False)
     threshold = cfg.algs.nullspace_threshold

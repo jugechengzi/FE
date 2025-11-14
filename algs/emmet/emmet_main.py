@@ -31,6 +31,7 @@ def load_cov(cfg,model,tok):
             cfg.llms.mom2_n_samples,
             cfg.llms.mom2_dtype,
             force_recompute=False,
+            cache_filename_suffix=cfg.cache_filename_suffix
         )
         covs.append(cov)
 def chunks(arr, n):
@@ -64,7 +65,7 @@ def apply_emmet_to_model(
     layers=cfg.llms.layers
     #查看KKT是否已经计算好。
     for i, layer in enumerate(layers):
-        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + ".npz"
+        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cfg.cache_filename_suffix + ".npz"
         ensure_file_directory(Cpathi)
         if not os.path.exists(Cpathi):#then compute
             print("The key matrix of old memory K0K0T for model {} layer {} "
@@ -78,6 +79,7 @@ def apply_emmet_to_model(
                 cfg.llms.mom2_n_samples,
                 cfg.llms.mom2_dtype,
                 force_recompute=False,
+                cache_filename_suffix=cfg.cache_filename_suffix
             )
             #这个内部会自动保存，我们不需要再额外管。
     load_cov(cfg,model,tok)

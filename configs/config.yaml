@@ -7,6 +7,8 @@ gpu: 0
 model_dtype: bfloat16 #choices=["auto","float32","bfloat16"]
 bs: 100
 data: multi_counterfact_20877 #choices=[multi_counterfact_20877,zsre_mend_eval_19086,wiki_cf_2266,mquake_cf_9218, counterfact_2000]
+neighborhood_logits: False
+cache_filename_suffix: "normlized_k0" #a suffix added to cache filename, useful when you want to use different cache settings
 lti: False
 num_edits: 2000
 test_only: False
@@ -30,7 +32,7 @@ data_dir: /home/weiliu/student/xhm/data
 results_dir: /home/weiliu/student/xhm/edit-result-final #per alg
 cache_dir: /home/weiliu/student/xhm/edit-cache-final #per llm
 
-lw_eval: True
+lw_eval: False
 lbq_eval: False
 
 

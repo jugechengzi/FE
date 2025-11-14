@@ -19,6 +19,9 @@ from omegaconf import DictConfig
 from evals.lweval import lw_eval, true_false_probs, test_inversion_tf,test_unlearning_ab
 from evals.lbqeval import lbq_eval
 
+target_true_logits = []
+target_new_logits = []
+
 def compute_probs_correct(cfg,model,tok,prob_prompts,which_correct,
                           target_new,target_true,keys):
     # Flatten all the evaluated prefixes into one list.
@@ -107,16 +110,30 @@ def eval_counterfact(
     paraphrase_prompts = record["paraphrase_prompts"]
     neighborhood_prompts = record["neighborhood_prompts"]
 
+    keys=["rewrite_prompts","paraphrase_prompts","neighborhood_prompts"]
+
     # Form a list of lists of prefixes to test.
-    prob_prompts = [
-        rewrite_prompts,
-        paraphrase_prompts,
-        neighborhood_prompts,
-    ]
+    if cfg.neighborhood_logits:
+        prob_prompts = [
+            # rewrite_prompts,
+            # paraphrase_prompts,
+            neighborhood_prompts,
+        ]
+        keys=["neighborhood_prompts"]
+    else:
+        prob_prompts = [
+            rewrite_prompts,
+            paraphrase_prompts,
+            neighborhood_prompts,
+        ]
     if cfg.target_true_test:
         which_correct = [
             [1 for _ in range(len(rewrite_prompts))],
             [1 for _ in range(len(paraphrase_prompts))],
+            [1 for _ in range(len(neighborhood_prompts))],
+        ]
+    elif cfg.neighborhood_logits:
+        which_correct = [
             [1 for _ in range(len(neighborhood_prompts))],
         ]
     else:
@@ -125,7 +142,6 @@ def eval_counterfact(
             [0 for _ in range(len(paraphrase_prompts))],
             [1 for _ in range(len(neighborhood_prompts))],
         ]
-    keys=["rewrite_prompts","paraphrase_prompts","neighborhood_prompts"]
     if cfg.negetive_prompt_test:
         keys[0] = "rewrite_negetive_prompts"
     metrics=compute_probs_correct(cfg,model,tok,prob_prompts,which_correct,target_new,target_true
@@ -151,6 +167,8 @@ def test_batch_prediction(
     """
     which_correct: Which target to consider correct. Either 0 for "new" or 1 for "true".
     """
+    global target_true_logits
+    global target_new_logits
     device=next(model.parameters()).device
     prefix_lens = [len(n) for n in tok(prefixes)["input_ids"]]
     prompt_tok = tok(
@@ -182,6 +200,7 @@ def test_batch_prediction(
 
     for i in range(logits.size(0)):
         cur_len = choice_a_len if i % 2 == 0 else choice_b_len
+        cur_logits_list = []
 
         # Compute suffix probabilities
         for j in range(cur_len):
@@ -189,6 +208,18 @@ def test_batch_prediction(
             probs[i] += -torch.nn.functional.log_softmax(
                 logits[i, prefix_lens[i // 2] + j - 1, :], dim=0
             )[cur_tok].item()
+            if cfg.neighborhood_logits:
+                cur_logits_list.append(
+                    logits[i, prefix_lens[i // 2] + j - 1, :].cpu()
+                )
+        if i % 2 == 0 and cfg.neighborhood_logits:
+            target_new_logits.append(
+                cur_logits_list
+            )
+        elif i % 2 == 1 and cfg.neighborhood_logits:
+            target_true_logits.append(
+                cur_logits_list
+            )
         probs[i] /= cur_len
 
         # Compute accuracy on new targets
