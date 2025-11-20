@@ -151,7 +151,7 @@ def apply_prune_to_model(
     layers=cfg.llms.layers
     #查看KKT是否已经计算好。
     for i, layer in enumerate(layers):
-        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cfg.cache_filename_suffix + ".npz"
+        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +("-" if cfg.cache_filename_suffix !="" else "")+ cfg.cache_filename_suffix + ".npz"
         ensure_file_directory(Cpathi)
         if not os.path.exists(Cpathi):#then compute
             print("The key matrix of old memory K0K0T for model {} layer {} "
