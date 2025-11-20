@@ -1,6 +1,5 @@
 import typing
 import numpy as np
-import scipy
 import torch
 import sys
 import os
@@ -22,13 +21,13 @@ def check_next_word_binary(texts, target_words,class1="true",class2="false", cla
         # if target_word == len(words):#说明续写的词和answer黏在一起了。只有这种情况了，不可能target word大于后者，是出错的情况。
         #     target_word=target_word-1这个其实就是下面这种情况。
         target_word=min(len(words)-1,target_word)#永远不会越界。
-        if class1 == words[target_word]:
+        if class1 == words[target_word][:len(class1)]:
             predictions.append(0)
-        elif class2 == words[target_word]:
+        elif class2 == words[target_word][:len(class2)]:
             predictions.append(1)
-        elif class3 != None and class3 == words[target_word]:
+        elif class3 != None and class3 == words[target_word][:len(class3)]:
             predictions.append(2)
-        elif class4 != None and class4 == words[target_word]:
+        elif class4 != None and class4 == words[target_word][:len(class4)]:
             predictions.append(3)
         else:
             predictions.append(-1)
