@@ -9,7 +9,6 @@ from itertools import chain
 
 import numpy as np
 import torch
-from sklearn.feature_extraction.text import TfidfVectorizer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from omegaconf import DictConfig
 from evals.lweval import lw_eval, true_false_probs

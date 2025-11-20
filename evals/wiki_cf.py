@@ -8,9 +8,7 @@ appropriate arguments, which returns a dictionary containing them.
 import typing
 from itertools import chain
 
-import nltk
 import numpy as np
-import scipy
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from util.generate import generate_fast

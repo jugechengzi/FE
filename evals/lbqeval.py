@@ -8,9 +8,7 @@ from util.generate import generate_fast
 import typing
 from itertools import chain
 
-import nltk
 import numpy as np
-import scipy
 import torch
 
 def eval_counterfact(cfg,model,tok,prob_prompts,which_correct,
