@@ -78,7 +78,7 @@ def layer_stats(
         precision = "float64"
     dtype = getattr(torch, precision)
     # stats_dir = Path(stats_dir)
-    filename=cfg.cache_dir+"/stats/"+cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cache_filename_suffix + ".npz"
+    filename=cfg.cache_dir+"/stats/"+cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +("-" if cache_filename_suffix !="" else "")+ cache_filename_suffix + ".npz"
     if cache_filename_suffix == "local":
         sample_indices_filename=cfg.cache_dir+"/stats/"+cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + "-local-sample-indices.npz"
     # file_extension = f"{model_name}/{ds_name}_stats/{layer_name}_{precision}_{'-'.join(sorted(to_collect))}{size_suffix}.npz"
