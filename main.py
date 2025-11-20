@@ -24,12 +24,7 @@ from load import load_model,load_data,save_model
 from util.utility import ensure_file_directory
 import numpy as np
 import time
-# import os
-# os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# from huggingface_hub import login
-# login(token="your_token")#这玩意是要登录huggingface啊，我们不登录。
-# print("cuda is available:",torch.cuda.is_available())#不知道为什么，没有这句话下面会没有办法用cuda，好奇葩。
 ALG_DICT = {
     "alphaedit":  apply_alphaedit_to_model,
     "memit": apply_memit_to_model,
@@ -68,8 +63,6 @@ def set_random_seed(seed=42):
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
-# D:\lbq\project\python\MI\LLMEdit
-#D:/lbq/project/python/MI/LLMEdit
 
 
 def print_dict(dict):
@@ -78,17 +71,25 @@ def print_dict(dict):
 
 def eval_algo(cfg,model,tok,data):
     all_metrics = {}
+    # filtered_data = []
     #一个一个评估。
     for edit in data:#不支持不同的样本有不同的key评估。
         metrics=eval_one_edit(cfg,model,tok,edit)
         if metrics is None:
             continue
+        # if metrics.get('rewrite_prompts_correct', 0) == 1:
+        #     filtered_data.append(edit)
         if len(all_metrics)==0:
             for key,value in metrics.items():
                 all_metrics[key]=[value]
         else:
             for key,value in metrics.items():
                 all_metrics[key].append(value)
+    # #保存过滤后的数据集。
+    # file=cfg.data_dir+"/"+f"{cfg.data}_{cfg.llms.name.replace('/','-')}"+"_filtered.json"
+    # ensure_file_directory(file)
+    # with open(file, "w", encoding="utf-8") as f:
+    #     json.dump(filtered_data, f, ensure_ascii=False, indent=2)
     #对所有指标进行总结。
     avg_metrics={}
     for key,value in all_metrics.items():

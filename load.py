@@ -56,7 +56,7 @@ def load_model(model,cfg):
     if cfg.algs.name == 'wise':
         device = f'cuda:{cfg.gpu}'
         editor = WISE.WISE(model=model, config=cfg.llms, device=device)
-        editor.load(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.save_name}-{cfg.llms.name.replace("/", "-")}.pt")
+        editor.load(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.load_name}-{cfg.llms.name.replace("/", "-")}.pt")
         return editor
     weights_file = weights_dir + "/{}/{}-{}-{}.pt".format(cfg.algs.name, cfg.data, cfg.load_name,
                                                           cfg.llms.name.replace("/", "-"))

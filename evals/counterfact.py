@@ -104,6 +104,13 @@ def eval_counterfact(
     rewrite_prompts = [record["prompt"].format(subject)]
     if cfg.negetive_prompt_test:
         rewrite_prompts = [record["negetive_prompt"]]
+    if cfg.subject_output_relation_test1:
+        rewrite_prompts = [record["subject"] + " is"]
+    if cfg.subject_output_relation_test2:
+        import random
+        random_prefixs = ["the best friend of ", "the hometown of "]
+        random_prefix = random_prefixs[random.randint(0,1)]
+        rewrite_prompts = [random_prefix + record["subject"] + " is"]
     paraphrase_prompts = record["paraphrase_prompts"]
     neighborhood_prompts = record["neighborhood_prompts"]
 

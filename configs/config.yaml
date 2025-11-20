@@ -8,7 +8,7 @@ model_dtype: bfloat16 #choices=["auto","float32","bfloat16"]
 bs: 100
 data: multi_counterfact_20877 #choices=[multi_counterfact_20877,zsre_mend_eval_19086,wiki_cf_2266,mquake_cf_9218, counterfact_2000]
 neighborhood_logits: False
-cache_filename_suffix: "normlized_k0" #a suffix added to cache filename, useful when you want to use different cache settings
+cache_filename_suffix: "local" #a suffix added to cache filename, useful when you want to use different cache settings
 lti: False
 num_edits: 2000
 test_only: False
@@ -16,6 +16,8 @@ tf_props: False
 inversion_tf: False
 unlearning_ab: False
 negetive_prompt_test: False
+subject_output_relation_test1: False
+subject_output_relation_test2: False
 target_true_test: False
 target_true_file_suffix: "_filtered" #"_filtered" or "_auto_corrected"
 target_auto_corrected_test: False

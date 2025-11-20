@@ -2,8 +2,7 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
+import time
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -104,6 +103,7 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
     z_layer = cfg.llms.layers[-1]
     z_list = []
 
+    start_time = time.time()
     for request in requests:
         cur_z = compute_z(
             model,
@@ -114,6 +114,8 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
             context_templates,
         )
         z_list.append(cur_z)
+    end_time = time.time()
+    print(f"Computed z for batch of {len(requests)} in {end_time - start_time:.2f} seconds")
     zs = torch.stack(z_list, dim=1)#[dim,bs]
 
     for i, layer in enumerate(cfg.llms.layers):
@@ -154,6 +156,7 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
         cov = covs[i]
         upd_type = torch.float
 
+        start_time = time.time()
         if cfg.algs.L2 == 0:
             coef=cfg.llms.mom2_update_weight[i]
             upd_matrix = torch.linalg.solve(
@@ -167,6 +170,8 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
                 cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
                 layer_ks.to(upd_type) @ resid.T,
             )
+        end_time = time.time()
+        print(f"Solved for update matrix in {end_time - start_time:.2f} seconds")
         if cfg.algs.add_old_keys:
             cache_c[i, :, :] += (layer_ks @ layer_ks.T).cpu()
         # Adjust update matrix shape
