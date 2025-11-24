@@ -1,0 +1,47 @@
+name: Qwen/Qwen2.5-14B-Instruct
+
+#### for LTI start ####
+mid_kl_factor: 0.0425
+last_kl_factor: 0.0625
+nll_factor: 1
+midlayers:
+  - 15
+constr_pos: subject
+#### for LTI end ####
+
+fact_token: subject_last
+
+clamp_norm_factor: 0.75
+v_num_grad_steps: 25
+v_lr: 1e-1
+v_loss_layer: 47
+v_weight_decay: 0.5
+kl_factor: 0.0625
+
+layers:
+  - 9
+  - 10
+  - 11
+  - 12
+  - 13
+mom2_update_weight:
+  - 15000
+  - 15000
+  - 15000
+  - 15000
+  - 15000
+layer_selection: all
+
+emb_module: model.embed_tokens
+rewrite_module_tmp: model.layers.{}.mlp.down_proj
+layer_module_tmp: model.layers.{}
+mlp_module_tmp: model.layers.{}.mlp
+attn_module_tmp: model.layers.{}.self_attn
+ln_f_module: model.norm
+lm_head_module: lm_head
+
+mom2_dataset: wikipedia
+mom2_n_samples: 100000
+mom2_dtype: float32
+mom2_adjustment: true
+mom2_maxseqlen:  #8192 will cause out of memory for 48G gpu。
