@@ -32,6 +32,12 @@ def load_cov(cfg,model,tok):
             force_recompute=False,
             cache_filename_suffix=cfg.cache_filename_suffix
         )
+        if cfg.cov_mode == "random":
+            print("Using random covariance matrix!")
+            cov = torch.randn_like(cov)
+        if cfg.cov_mode == "identity":
+            print("Using identity covariance matrix!")
+            cov = torch.eye(cov.shape[0])
         covs.append(cov)
 
 def chunks(arr, n):
@@ -104,19 +110,25 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
     z_list = []
 
     start_time = time.time()
-    for request in requests:
-        cur_z = compute_z(
-            model,
-            tok,
-            request,
-            cfg,
-            z_layer,
-            context_templates,
-        )
-        z_list.append(cur_z)
-    end_time = time.time()
-    print(f"Computed z for batch of {len(requests)} in {end_time - start_time:.2f} seconds")
-    zs = torch.stack(z_list, dim=1)#[dim,bs]
+    cache_zs_file = cfg.cache_dir+"/"+cfg.cache_zs+"_zs_layer"+str(z_layer)+".pt"
+    if os.path.isfile(cache_zs_file):
+        zs = torch.load(cache_zs_file)
+        print(f"Load zs from {cache_zs_file}")
+    else:
+        for request in requests:
+            cur_z = compute_z(
+                model,
+                tok,
+                request,
+                cfg,
+                z_layer,
+                context_templates,
+            )
+            z_list.append(cur_z)
+        end_time = time.time()
+        print(f"Computed z for batch of {len(requests)} in {end_time - start_time:.2f} seconds")
+        zs = torch.stack(z_list, dim=1)#[dim,bs]
+        torch.save(zs, cache_zs_file)
 
     for i, layer in enumerate(cfg.llms.layers):
         print(f"\n\nLAYER {layer}\n")
@@ -151,25 +163,22 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
 
         repeat_factor = (layer_ks.size(1) // targets.size(1))
         targets = targets.repeat_interleave(repeat_factor, dim=1)
+
+        layer_ks, targets = (
+            layer_ks.double(),
+            targets.double()
+        )
         resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
 
-        cov = covs[i]
-        upd_type = torch.float
+        cov = covs[i].double()
 
         start_time = time.time()
-        if cfg.algs.L2 == 0:
-            coef=cfg.llms.mom2_update_weight[i]
-            upd_matrix = torch.linalg.solve(
-                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+coef*cov.to(device)+
-                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
-                layer_ks.to(upd_type) @ resid.T,
-            )
-        else:
-            upd_matrix = torch.linalg.solve(
-                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+
-                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
-                layer_ks.to(upd_type) @ resid.T,
-            )
+        coef=cfg.llms.mom2_update_weight[i]
+        upd_matrix = torch.linalg.solve(
+            layer_ks @ layer_ks.T + cache_c[i, :, :].to(device).double()+coef*cov.to(device)+
+            cfg.algs.L2 * torch.eye(layer_ks.shape[0], device=device).double(),
+            layer_ks @ resid.T,
+        )
         end_time = time.time()
         print(f"Solved for update matrix in {end_time - start_time:.2f} seconds")
         if cfg.algs.add_old_keys:

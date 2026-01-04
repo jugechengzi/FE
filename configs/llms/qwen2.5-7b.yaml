@@ -52,11 +52,11 @@ layers:
   - 7
   - 8
 mom2_update_weight:
-  - 15000
-  - 15000
-  - 15000
-  - 15000
-  - 15000
+  - 1.5e4
+  - 1.5e4
+  - 1.5e4
+  - 1.5e4
+  - 1.5e4
 layer_selection: all
 
 emb_module: model.embed_tokens

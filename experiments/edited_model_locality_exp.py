@@ -33,12 +33,12 @@ def load_cov(cfg,model,tok,layers):
             model,
             tok,
             layer,
-            "/home/weiliu/student/xhm/data/locality_data_zsre.json",
-            2000,
+            cfg.llms.mom2_dataset,
+            cfg.llms.mom2_n_samples,
             cfg.llms.mom2_dtype,
             force_recompute=False,
-            cache_filename_suffix="new_cov2_2000_z",
-            random_sample=None
+            cache_filename_suffix="local",
+            random_sample=1
         )
         covs.append(cov)
 
@@ -46,10 +46,10 @@ def load_cov(cfg,model,tok,layers):
 def main(cfg):
 
     model_name = cfg.llms.name
-    load_path = "/home/weiliu/student/xhm/edit-cache-final"
+    load_path = "/mnt/hdd/weiliu/student/xhm/edit-cache-final"
     # multi_counterfact_20877,zsre_mend_eval_19086,"wiki_cf_2266","mquake_cf_9218",
     datasets = ["zsre_mend_eval_19086"]
-    algs = ["memit", "adaedit", "namet", "prune", "rect", "pmet", "alphaedit", "emmet"]
+    algs = ["memit"]
 
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype).to(device)
     tok = AutoTokenizer.from_pretrained(model_name)
@@ -59,11 +59,11 @@ def main(cfg):
         for alg in algs:
             print("**********Processing algorithm: {}**********".format(alg))
             # load edited weights with k0k0t
-            ori_upd_matrixs = get_upd_matrix(model, load_path, alg, "bs2000-local_cov", model_name, data)
+            ori_upd_matrixs = get_upd_matrix(model, load_path, alg, "1.5e-4cov-bs2000", model_name, data)
             nok0_upd_matrixs = None
-            if alg in ["memit", "adaedit", "namet", "prune", "rect", "pmet"]:
-                # load edited weights without k0k0t
-                nok0_upd_matrixs = get_upd_matrix(model, load_path, alg+"_nok0", "bs2000-local_cov", model_name, data)
+            # if alg in ["memit", "adaedit", "namet", "prune", "rect", "pmet"]:
+            #     # load edited weights without k0k0t
+            #     nok0_upd_matrixs = get_upd_matrix(model, load_path, alg+"_nok0", "bs2000-local_cov", model_name, data)
             for i, layer in enumerate(cfg.llms.layers):
                 cov = covs[i].to(dtype).to(device)
                 ori_delta_mm_cov = ori_upd_matrixs[i] @ cov @ ori_upd_matrixs[i].T
