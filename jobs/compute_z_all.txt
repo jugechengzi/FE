@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -P CFP03-SF-101
+#PBS -j oe
+#PBS -k oed 
+#PBS -N mcf_z_all_123
+#PBS -q auto
+#PBS -l select=1:ngpus=1 
+#PBS -l walltime=06:00:00
+
+cd $PBS_O_WORKDIR; 
+
+image="/app1/common/singularity-img/hopper/cuda/cuda_12.1.0-cudnn8-devel-u20.04.sif" 
+module load singularity 
+
+singularity exec $image bash << EOF > stdout_mcf_z_all_123.$PBS_JOBID 2> stderr_mcf_z_all_123.$PBS_JOBID 
+source /hpctmp/hkliu/virtualenvs/memit/bin/activate
+
+export HF_HOME=/scratch/hkliu/cache/huggingface
+export HF_DATASETS_CACHE=/scratch/hkliu/cache/datasets
+export HUGGINGFACE_HUB_TOKEN=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
+
+cd /home/svu/hkliu/model_edit/me
+
+python precompute_z.py --edited_layers=4,5,6,7,8 z_method=all data=multi_counterfact_20877 num_z_samples=2000 seed=123
+
+EOF
+

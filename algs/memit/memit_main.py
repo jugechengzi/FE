@@ -67,6 +67,9 @@ def apply_memit_to_model(
     device = torch.device("cuda:{}".format(cfg.gpu) if torch.cuda.is_available() else "cpu")
     requests = deepcopy(requests)
     for i, request in enumerate(requests):
+        # Add sample index if not already present (for z extraction)
+        if "sample_idx" not in request:
+            requests[i]["sample_idx"] = i
         requests[i]["target_new"] = " " + request["target_new"]
     layers=cfg.llms.layers
     #查看KKT是否已经计算好。
@@ -91,12 +94,46 @@ def apply_memit_to_model(
     load_cov(cfg,model,tok)
     fc_dim=get_fc_dim(model,cfg)
     cache_c = torch.zeros((len(layers), fc_dim,fc_dim), device="cpu")
+    
+    # Load z cache once for all batches (enables flexible batch size)
+    model_cache_name = cfg.llms.name.replace("/", "-")
+    dataset_name = getattr(cfg, 'data', 'unknown')
+    seed_value = getattr(cfg, 'seed', 0)
+    z_method = "all"
+    z_layer = cfg.llms.layers[-1]  # Use the last layer for z computation
+
+    print(f"\nLoading full z cache for MEMIT...")
+    cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{z_layer}.pt"
+    
+    if os.path.isfile(cache_zs_file):
+        zs_full = torch.load(cache_zs_file, map_location='cpu')  # [hidden_dim, num_all_samples]
+        print(f"Loaded full z cache from {cache_zs_file}, shape: {zs_full.shape}")
+        
+        # Validate that cache contains enough samples
+        num_cached_samples = zs_full.shape[1]
+        num_required_samples = len(requests)
+        if num_cached_samples < num_required_samples:
+            raise ValueError(
+                f"Insufficient cached z samples! "
+                f"Required: {num_required_samples}, Cached: {num_cached_samples}. "
+                f"Please pre-compute z for at least {num_required_samples} samples using precompute_z.py"
+            )
+        print(f"✓ Cache validation passed: {num_cached_samples} samples available, {num_required_samples} required")
+    else:
+        raise FileNotFoundError(f"Cache file not found: {cache_zs_file}. Please ensure the cache file exists before running.")
+    
     for requests_chunks in chunks(requests, cfg.bs):
-        batch_edit(cfg,model,tok,requests_chunks,device,cache_c)
+        batch_edit(cfg,model,tok,requests_chunks,device,cache_c,zs_full,z_layer)
     return model
 
-def batch_edit(cfg, model, tok, requests, device, cache_c):
-    # deltas = {}
+def batch_edit(cfg, model, tok, requests, device, cache_c, zs_full, z_layer):
+    """
+    Edit model weights for a batch of requests.
+    
+    Args:
+        zs_full: Full z cache tensor [hidden_dim, num_all_samples], loaded once for all batches
+        z_layer: The layer number where z is computed
+    """
     # Retrieve weights that user desires to change
     weights = {
         f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight": nethook.get_parameter(
@@ -104,31 +141,67 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
         )
         for layer in cfg.llms.layers
     }
-    # Compute z for final layer
     context_templates = get_context_templates(model, tok)
-    z_layer = cfg.llms.layers[-1]
-    z_list = []
+    
+    # Extract z for current batch by sample indices
+    # This enables flexible batch size without recomputing z!
+    sample_indices = [req["sample_idx"] for req in requests]
+    
+    # Safety check: ensure all indices are within bounds
+    max_cached_idx = zs_full.shape[1] - 1
+    max_requested_idx = max(sample_indices)
+    if max_requested_idx > max_cached_idx:
+        raise IndexError(
+            f"Sample index out of bounds! "
+            f"Requested index: {max_requested_idx}, Max cached index: {max_cached_idx}. "
+            f"Cache shape: {zs_full.shape}"
+        )
+    
+    zs = zs_full[:, sample_indices].to(device)  # [hidden_dim, current_batch_size]
+    print(f"Extracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shape: {zs.shape}")
+    
+    # ========== Original computation logic (archived for reference) ==========
+    # This was the old approach that computed z on-the-fly for each batch.
+    # Pros: No need to pre-compute; Cons: Slow, recomputes same z multiple times
+    # 
+    # z_list = []
+    # z_layer = 8
+    # for request in requests:
+    #     cur_z = compute_z(
+    #         model,
+    #         tok,
+    #         request,
+    #         cfg,
+    #         z_layer,
+    #         context_templates,
+    #     )
+    #     z_list.append(cur_z)
+    # zs = torch.stack(z_list, dim=1)  # [dim, bs]
+    # ========== End of archived computation logic ==========
 
-    start_time = time.time()
-    cache_zs_file = cfg.cache_dir+"/"+cfg.cache_zs+"_zs_layer"+str(z_layer)+".pt"
-    if os.path.isfile(cache_zs_file):
-        zs = torch.load(cache_zs_file)
-        print(f"Load zs from {cache_zs_file}")
-    else:
-        for request in requests:
-            cur_z = compute_z(
-                model,
-                tok,
-                request,
-                cfg,
-                z_layer,
-                context_templates,
-            )
-            z_list.append(cur_z)
-        end_time = time.time()
-        print(f"Computed z for batch of {len(requests)} in {end_time - start_time:.2f} seconds")
-        zs = torch.stack(z_list, dim=1)#[dim,bs]
-        torch.save(zs, cache_zs_file)
+    # Note: 现在的zs已经是从文件中加载好的了，而且是已经整合好的batch形式，所以不需要再一个一个提取和堆叠了。同时新增了batch size的支持，可以灵活调整批次大小，避免每次读取和使用只能是存储的全部数据量。
+
+    # 比较计算的zs和从文件加载的zs是否一致（调试用）
+    # zs_list = []
+    # for i, request in enumerate(requests):
+    #     cur_z_check = compute_z(
+    #         model,
+    #         tok,
+    #         request,
+    #         cfg,
+    #         z_layer,
+    #         context_templates,
+    #     ).to(device)
+    #     diff = torch.linalg.norm(cur_z_check - zs[:, i])
+    #     zs_list.append(cur_z_check)
+    #     if diff > 1e-4:
+    #         print(f"Warning: z mismatch for request index {i}, norm difference: {diff.item()}")
+    #     else:
+    #         print(f"z match confirmed for request index {i}, norm difference: {diff.item()}")
+    
+    # input("Press Enter to continue with the editing...")
+
+
 
     for i, layer in enumerate(cfg.llms.layers):
         print(f"\n\nLAYER {layer}\n")
@@ -222,6 +295,17 @@ def upd_matrix_match_shape(matrix: torch.Tensor, shape: torch.Size) -> torch.Ten
 
 
 def get_context_templates(model, tok):
+    """
+    Get context templates for z computation.
+    
+    CRITICAL: This function MUST produce identical results in both:
+    1. precompute_z.py (when caching z vectors)
+    2. memit_main.py (when using cached z vectors)
+    
+    The templates are generated using generate_fast with a fixed seed.
+    If the random seed or model state differs between precompute and inference,
+    the z vectors will NOT match, causing large edit errors!
+    """
     global CONTEXT_TEMPLATES_CACHE
 
     if CONTEXT_TEMPLATES_CACHE is None:

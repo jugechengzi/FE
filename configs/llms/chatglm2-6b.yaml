@@ -1,0 +1,47 @@
+name: THUDM/chatglm2-6b
+
+#### for LTI start ####
+mid_kl_factor: 0.0425
+last_kl_factor: 0.0625
+nll_factor: 1
+midlayers:
+  - 15
+constr_pos: subject
+#### for LTI end ####
+
+fact_token: subject_last
+
+clamp_norm_factor: 4
+v_num_grad_steps: 25
+v_lr: 5e-1
+v_loss_layer: 27
+v_weight_decay: 1e-3
+kl_factor: 0.0625
+
+layers:
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+mom2_update_weight:
+  - 1.5e4
+  - 1.5e4
+  - 1.5e4
+  - 1.5e4
+  - 1.5e4
+layer_selection: all
+
+# emb_module: transformer.embedding.word_embeddings
+rewrite_module_tmp: transformer.encoder.layers.{}.mlp.dense_4h_to_h
+layer_module_tmp: transformer.encoder.layers.{}
+mlp_module_tmp: transformer.encoder.layers.{}.mlp
+attn_module_tmp: transformer.encoder.layers.{}.self_attention
+ln_f_module: transformer.encoder.final_layernorm
+lm_head_module: transformer.output_layer
+
+mom2_dataset: wikipedia
+mom2_n_samples: 100000
+mom2_dtype: float32
+mom2_adjustment: true
+mom2_maxseqlen: 8192 #8192 will cause out of memory for 48G gpu。

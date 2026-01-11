@@ -104,10 +104,40 @@ def main(cfg: DictConfig) -> None:
     print("Start Loading model")
     model_name=cfg.llms.name
     model_name_or_path=MODEL_PATH.get(model_name,model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path,torch_dtype=cfg.model_dtype,trust_remote_code=True).to(device)
+
+    if cfg.model_dtype == "bfloat16":
+        torch_dtype = torch.bfloat16
+    elif cfg.model_dtype == "float16":
+        torch_dtype = torch.float16
+    elif cfg.model_dtype == "float32":
+        torch_dtype = torch.float32
+    else:
+        torch_dtype = "auto"
+    model = AutoModelForCausalLM.from_pretrained(model_name_or_path,torch_dtype=torch_dtype,trust_remote_code=True).to(device)
     tok = AutoTokenizer.from_pretrained(model_name_or_path,trust_remote_code=True)
     print("Loading model successfully")
-    tok.pad_token = tok.eos_token
+
+    # tok.pad_token = tok.eos_token
+
+    if "QWenTokenizer" in str(type(tok)):
+        # Qwen 官方定义：<|endoftext|> 是 eos, pad, bos
+        # 针对Qwen第一代
+        target_token = "<|endoftext|>"
+        tok.eos_token = target_token
+        tok.pad_token = target_token
+        tok.bos_token = target_token
+
+    if tok.pad_token is None:
+        try:
+            tok.pad_token = tok.eos_token
+            tok.pad_token_id = tok.eos_token_id
+        except AttributeError:
+            # 如果无法直接赋值，尝试直接修改内部变量或属性，针对chatglm等特殊tokenizer
+            tok.pad_token_id = tok.eos_token_id
+
+
+    # 打印确认，方便在日志中排查
+    print(f"Tokenizer Setup: Pad Token = {tok.pad_token}, Pad ID = {tok.pad_token_id}, Side = {tok.padding_side}")
 
     apply_algo = ALG_DICT[cfg.algs.name]
     data=load_data(cfg)

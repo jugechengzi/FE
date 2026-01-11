@@ -9,24 +9,24 @@ raw_ds = load_dataset(
     dict(wikitext="wikitext-103-raw-v1", wikipedia="20220301.en")[ds_name]
     )
 
-llms=["gpt2-xl","EleutherAI/gpt-j-6B"]
-for llm in llms:
-    model = AutoModelForCausalLM.from_pretrained(
-        llm,
-        torch_dtype="auto"
-    )
-    tokenizer = AutoTokenizer.from_pretrained(llm)
+# llms=["gpt2-xl","EleutherAI/gpt-j-6B"]
+# for llm in llms:
+#     model = AutoModelForCausalLM.from_pretrained(
+#         llm,
+#         torch_dtype="auto"
+#     )
+#     tokenizer = AutoTokenizer.from_pretrained(llm)
 
-from modelscope import snapshot_download
-llamas=["meta-llama/Llama-3-8B-Instruct","meta-llama/Llama-3.1-8B-Instruct",
-              "meta-llama/Llama-3.2-3B-Instruct"]
-#llama models are restricted to access, we use modelscope to download.
-llamas_modelscope=["LLM-Research/Meta-Llama-3-8B-Instruct","LLM-Research/Meta-Llama-3.1-8B-Instruct",
-                   "LLM-Research/Llama-3.2-3B-Instruct"]
-for llama in llamas_modelscope:
-    model_id=snapshot_download(llama,
-                               cache_dir="/home/liubingqing/.cache/modelscope")#将下载的大模型存放在cache_dir目录下。
-#这里使用~代表home目录会失败，不知道为什么，会选择创建一个~目录。
+# from modelscope import snapshot_download
+# llamas=["meta-llama/Llama-3-8B-Instruct","meta-llama/Llama-3.1-8B-Instruct",
+#               "meta-llama/Llama-3.2-3B-Instruct"]
+# #llama models are restricted to access, we use modelscope to download.
+# llamas_modelscope=["LLM-Research/Meta-Llama-3-8B-Instruct","LLM-Research/Meta-Llama-3.1-8B-Instruct",
+#                    "LLM-Research/Llama-3.2-3B-Instruct"]
+# for llama in llamas_modelscope:
+#     model_id=snapshot_download(llama,
+#                                cache_dir="/home/liubingqing/.cache/modelscope")#将下载的大模型存放在cache_dir目录下。
+# #这里使用~代表home目录会失败，不知道为什么，会选择创建一个~目录。
 
 #假设我们有2个知识要编辑。
 edited_facts=[{"question":"The mother tongue of Danielle Darrieux is","answer":"American English"},

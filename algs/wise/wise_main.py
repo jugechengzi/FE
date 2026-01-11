@@ -2,10 +2,8 @@ from typing import Any, Dict, List, Tuple
 from copy import deepcopy
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from omegaconf import DictConfig
-import sys
-sys.path.append('/home/weiliu/student/xhm/LLMEdit/algs/wise')
-from WISE import WISE
-from utils import tokenize, get_context_templates, get_load_model_path
+from .WISE import WISE
+from .utils import tokenize, get_context_templates, get_load_model_path
 from tqdm import tqdm
 def apply_wise_to_model(
         model: AutoModelForCausalLM,
@@ -20,7 +18,7 @@ def apply_wise_to_model(
     print(f"Executing WISE algorithm for the update: ")
     for request in requests[:10]:
         print(
-            f"[{request['prompt'].format(request["subject"])}] -> [{request['target_new']}]"
+            f"[{request['prompt'].format(request['subject'])}] -> [{request['target_new']}]"
         )
     for request in tqdm(requests, total=len(requests)):
         request["prompt"]=request["prompt"].format(request["subject"])

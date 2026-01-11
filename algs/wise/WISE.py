@@ -3,15 +3,13 @@ import random
 
 import torch
 from torch.nn import functional as F
-import sys
-sys.path.append('/home/weiliu/student/xhm/LLMEdit/algs/wise')
-from utils import parent_module, brackets_to_periods, EarlyStopMeter, EditingMeanAct
+from .utils import parent_module, brackets_to_periods, EarlyStopMeter, EditingMeanAct
 import transformers
 import numpy as np
 from torch import Tensor
 from torch.nn import CrossEntropyLoss
 from transformers.activations import ACT2FN
-from merge import slerp, GTA, linear
+from .merge import slerp, GTA, linear
 import torch.nn as nn
 import gc
 

@@ -53,7 +53,7 @@ def apply_alphaedit_to_model(
     layers=cfg.llms.layers
     # compute the null space project P.
     for i, layer in enumerate(layers):
-        Ppathi = cfg.cache_dir + "/null_space_project/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +"-"+ cfg.cache_filename_suffix + ".pt"
+        Ppathi = cfg.cache_dir + "/null_space_project/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +("-" if cfg.cache_filename_suffix!="" else "")+ cfg.cache_filename_suffix + ".pt"
         ensure_file_directory(Ppathi)
         if not os.path.exists(Ppathi):#then compute
             print("The null-space projection matrix P for model {} layer {} "

@@ -56,7 +56,8 @@ def load_model(model,cfg):
     if cfg.algs.name == 'wise':
         device = f'cuda:{cfg.gpu}'
         editor = WISE.WISE(model=model, config=cfg.llms, device=device)
-        editor.load(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.load_name}-{cfg.llms.name.replace("/", "-")}.pt")
+        model_name = cfg.llms.name.replace("/", "-")
+        editor.load(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.load_name}-{model_name}.pt")
         return editor
     weights_file = weights_dir + "/{}/{}-{}-{}.pt".format(cfg.algs.name, cfg.data, cfg.load_name,
                                                           cfg.llms.name.replace("/", "-"))
@@ -71,7 +72,8 @@ def load_model(model,cfg):
 def save_model(model,cfg):
     weights_dir = cfg.cache_dir + "/saved_weights"
     if cfg.algs.name == 'wise':
-        model.save(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.save_name}-{cfg.llms.name.replace("/", "-")}.pt")
+        model_name = cfg.llms.name.replace("/", "-")
+        model.save(f"{weights_dir}/{cfg.algs.name}/{cfg.data}-{cfg.save_name}-{model_name}.pt")
         return
     if cfg.algs.name == 'rledit':
         weights = {

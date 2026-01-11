@@ -58,27 +58,45 @@ def js_divergence_torch(p, q, device="cpu"):
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(cfg):
     data = "multi_counterfact_20877"
-    save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in ["2500","5000", "7500", "10000", "12500", "15000", "17500", "20000", "22500", "25000", "27500", "30000"]]
-    for save_name in save_names:
-        pre_results_file = cfg.results_dir + "/{}/{}/{}".format(data, cfg.llms.name.replace("/", "-"), save_name)
-        ori_logits_dict_filename = pre_results_file + "_neighborhood_target_logits.pt"
-        ori_logits = torch.load(ori_logits_dict_filename)["target_true_logits"]
-        
-        post_results_file = cfg.results_dir + "/{}/{}/{}-{}".format(data, cfg.llms.name.replace("/","-"),cfg.algs.name, save_name)
-        post_logits_dict_filename = post_results_file + "_neighborhood_target_logits.pt"
-        post_logits = torch.load(post_logits_dict_filename)["target_true_logits"]
+    # data = "zsre_mend_eval_19086"
+
+    print("Evaluating locality for model {}".format(cfg.llms.name))
+    # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in ["2500","5000", "7500", "10000", "12500", "17500", "20000", "22500", "25000", "27500", "30000"]]
+    # save_names  = [f"{x}cov-bs2000-neighborhood-logits" for x in ["1.5e2","1.5e3","1.5e4","1.5e5", "1.5e6"]]
+    # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in ["1.5e4"]]
 
 
-        total_num = len(ori_logits)
-        kl_divergence_mean = 0
-        js_divergence_mean = 0
-        for i in range(total_num):
-            ori_y = ori_logits[i][0]
-            post_y = post_logits[i][0]
-            kl_divergence_mean += kl_divergence_torch(ori_y, post_y, "cuda:0") / total_num
-            js_divergence_mean += js_divergence_torch(ori_y, post_y, "cuda:1") / total_num
-        print(save_name+" kl_divergence_mean: "+str(kl_divergence_mean))
-        print(save_name+" js_divergence_mean: "+str(js_divergence_mean))
+    # algs = ["wise", "rledit","memit","adaedit","alphaedit","emmet","namet","pmet","prune","rect"]
+
+    
+    algs = ["memit"]
+    save_names = [f"{x}-{_lambda}-bs2000-neighborhood-logits" for x in ["z","t","a"] for _lambda in ["1.5e4"]]
+
+
+    print ("Evaluating method {}".format(algs))
+    for alg in algs:
+        print("\n")
+        print("Evaluating locality for method {}".format(alg))
+        for save_name in save_names:
+            pre_results_file = cfg.results_dir + "/{}/{}/{}".format(data, cfg.llms.name.replace("/", "-"), save_name)
+            ori_logits_dict_filename = pre_results_file + "_neighborhood_target_logits.pt"
+            ori_logits = torch.load(ori_logits_dict_filename)["target_true_logits"]
+            
+            post_results_file = cfg.results_dir + "/{}/{}/{}-{}".format(data, cfg.llms.name.replace("/","-"),alg, save_name)
+            post_logits_dict_filename = post_results_file + "_neighborhood_target_logits.pt"
+            post_logits = torch.load(post_logits_dict_filename)["target_true_logits"]
+
+            total_num = len(ori_logits)
+            kl_divergence_mean = 0
+            js_divergence_mean = 0
+            for i in range(total_num):
+                ori_y = ori_logits[i][0]
+                post_y = post_logits[i][0]
+                kl_divergence_mean += kl_divergence_torch(ori_y, post_y, "cuda:0") / total_num
+                js_divergence_mean += js_divergence_torch(ori_y, post_y, "cuda:0") / total_num
+            print(save_name+" kl_divergence_mean: "+str(kl_divergence_mean))
+            print(save_name+" js_divergence_mean: "+str(js_divergence_mean))
+        print("\n")
 
 
 if __name__ == "__main__":

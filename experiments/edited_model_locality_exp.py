@@ -37,7 +37,7 @@ def load_cov(cfg,model,tok,layers):
             cfg.llms.mom2_n_samples,
             cfg.llms.mom2_dtype,
             force_recompute=False,
-            cache_filename_suffix="local",
+            cache_filename_suffix="",
             random_sample=1
         )
         covs.append(cov)
@@ -46,10 +46,28 @@ def load_cov(cfg,model,tok,layers):
 def main(cfg):
 
     model_name = cfg.llms.name
-    load_path = "/mnt/hdd/weiliu/student/xhm/edit-cache-final"
+    # model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # model_name = "Qwen/Qwen-7B"
+
+    # load_path = "/mnt/hdd/weiliu/student/xhm/edit-cache-final"
+    load_path = "/scratch/hkliu/cache/edit-cache-final"
+    print("Load model from {}".format(model_name))
+
     # multi_counterfact_20877,zsre_mend_eval_19086,"wiki_cf_2266","mquake_cf_9218",
-    datasets = ["zsre_mend_eval_19086"]
+    # datasets = ["zsre_mend_eval_19086"]
+    datasets = ["multi_counterfact_20877"]
     algs = ["memit"]
+
+    # _lambda = "1.5e4"
+    _lambda = "1.5e4"
+    # load_name = f"{_lambda}cov-bs2000"
+
+    # a:传统memit t:新方法 z: baseline只更新第八层
+    load_name = f"z-{_lambda}-bs2000"
+    
+    print("Load edited weights from {}".format(load_name))
+    print("Using datasets: {}".format(datasets))
+    print("Using algorithms: {}".format(algs))
 
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype).to(device)
     tok = AutoTokenizer.from_pretrained(model_name)
@@ -59,7 +77,7 @@ def main(cfg):
         for alg in algs:
             print("**********Processing algorithm: {}**********".format(alg))
             # load edited weights with k0k0t
-            ori_upd_matrixs = get_upd_matrix(model, load_path, alg, "1.5e-4cov-bs2000", model_name, data)
+            ori_upd_matrixs = get_upd_matrix(model, load_path, alg, load_name, model_name, data)
             nok0_upd_matrixs = None
             # if alg in ["memit", "adaedit", "namet", "prune", "rect", "pmet"]:
             #     # load edited weights without k0k0t

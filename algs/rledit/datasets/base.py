@@ -10,14 +10,14 @@ from transformers import AutoTokenizer
 
 DATASET_MAP = {
     "multi_counterfact_20877": {
-        "train_path": "/home/weiliu/student/xhm/data/multi_counterfact_eval.json",
-        "valid_path": "/home/weiliu/student/xhm/data/multi_counterfact_20877.json",
-        "negetive_prompt_path": "/home/weiliu/student/xhm/data/mcf_negetive_prompt.json"
+        "train_path": "/home/svu/hkliu/model_edit/me/algs/multi_counterfact_eval.json",
+        "valid_path": "/home/svu/hkliu/model_edit/me/data/multi_counterfact_20877.json",
+        "negetive_prompt_path": "/home/svu/hkliu/model_edit/me/algs/mcf_negetive_prompt.json"
     },
     "zsre_mend_eval_19086": {
-        "train_path": "/home/weiliu/student/xhm/data/zsre_train.json",
-        "valid_path": "/home/weiliu/student/xhm/data/zsre_mend_eval_19086.json",
-        "negetive_prompt_path": "/home/weiliu/student/xhm/data/zsre_negetive_prompt.json"
+        "train_path": "/home/svu/hkliu/model_edit/me/algs/zsre_train.json",
+        "valid_path": "/home/svu/hkliu/model_edit/me/data/zsre_mend_eval_19086.json",
+        "negetive_prompt_path": "/home/svu/hkliu/model_edit/me/algs/zsre_negetive_prompt.json"
     }
 }
 

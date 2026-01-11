@@ -21,30 +21,49 @@ def get_topk_overlap_count(logits1, logits2, k):
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(cfg):
     data = "multi_counterfact_20877"
-    save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in ["2500","5000", "7500", "10000", "12500", "15000", "17500", "20000", "22500", "25000", "27500", "30000"]]
-    for save_name in save_names:
-        pre_results_file = cfg.results_dir + "/{}/{}/{}".format(data, cfg.llms.name.replace("/", "-"), save_name)
-        ori_logits_dict_filename = pre_results_file + "_neighborhood_target_logits.pt"
-        ori_logits = torch.load(ori_logits_dict_filename)["target_true_logits"]
-        
-        post_results_file = cfg.results_dir + "/{}/{}/{}-{}".format(data, cfg.llms.name.replace("/","-"),cfg.algs.name, save_name)
-        post_logits_dict_filename = post_results_file + "_neighborhood_target_logits.pt"
-        post_logits = torch.load(post_logits_dict_filename)["target_true_logits"]
+    # data = "zsre_mend_eval_19086"
 
+    # model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # model_name = "Qwen/Qwen2.5-7B-Instruct"
+    print("Evaluating locality for model {}".format(cfg.llms.name))
 
-        total_num = len(ori_logits)
-        count_1 = 0
-        count_5 = 0
-        count_10 = 0
-        for i in range(total_num):
-            ori_y = ori_logits[i][0]
-            post_y = post_logits[i][0]
-            count_1 += get_topk_overlap_count(ori_y, post_y, 1)
-            count_5 += get_topk_overlap_count(ori_y, post_y, 5)
-            count_10 += get_topk_overlap_count(ori_y, post_y, 10)
-        print(save_name+" top-1 rate: "+ str(count_1/total_num))
-        print(save_name+" top-5 rate: "+ str(count_5/(total_num*5)))
-        print(save_name+" top-10 rate: "+ str(count_10/(total_num*10)))
+    # algs = ["wise", "rledit","memit","adaedit","alphaedit","emmet","namet","pmet","prune","rect"]
+    algs = ["memit"]
+
+    print("Evaluating method {}".format(algs))
+
+    # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in [ "2500","5000", "7500", "10000", "12500", "17500", "20000", "22500", "25000", "27500", "30000"]]
+    # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in ["1.5e2","1.5e3", "1.5e4","1.5e5", "1.5e6"]]
+    # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in [ "1.5e4"]]
+    save_names = [f"{x}-{_lambda}-bs2000-neighborhood-logits" for x in ["z","t","a"] for _lambda in ["1.5e4"]]
+
+    for alg in algs:
+        print("\n")
+        print("Evaluating locality for method {}".format(alg))
+        for save_name in save_names:
+            pre_results_file = cfg.results_dir + "/{}/{}/{}".format(data, cfg.llms.name.replace("/", "-"), save_name)
+            ori_logits_dict_filename = pre_results_file + "_neighborhood_target_logits.pt"
+            ori_logits = torch.load(ori_logits_dict_filename)["target_true_logits"]
+            
+            post_results_file = cfg.results_dir + "/{}/{}/{}-{}".format(data, cfg.llms.name.replace("/","-"),alg, save_name)
+            post_logits_dict_filename = post_results_file + "_neighborhood_target_logits.pt"
+            post_logits = torch.load(post_logits_dict_filename)["target_true_logits"]
+            print("Post result file path: "+post_logits_dict_filename)
+
+            total_num = len(ori_logits)
+            count_1 = 0
+            count_5 = 0
+            count_10 = 0
+            for i in range(total_num):
+                ori_y = ori_logits[i][0]
+                post_y = post_logits[i][0]
+                count_1 += get_topk_overlap_count(ori_y, post_y, 1)
+                count_5 += get_topk_overlap_count(ori_y, post_y, 5)
+                count_10 += get_topk_overlap_count(ori_y, post_y, 10)
+            print(save_name+" top-1 rate: "+ str(count_1/total_num))
+            print(save_name+" top-5 rate: "+ str(count_5/(total_num*5)))
+            print(save_name+" top-10 rate: "+ str(count_10/(total_num*10)))
+        print("\n")
 
 
 if __name__ == "__main__":
