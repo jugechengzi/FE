@@ -39,12 +39,6 @@ fonttools==4.61.1
 fqdn==1.5.1
 frozenlist==1.8.0
 fsspec==2024.6.1
-gdown==5.2.0
-google-api-core==2.28.1
-google-api-python-client==2.187.0
-google-auth==2.45.0
-google-auth-httplib2==0.3.0
-googleapis-common-protos==1.72.0
 h11==0.16.0
 hf-xet==1.2.0
 higher==0.2.1

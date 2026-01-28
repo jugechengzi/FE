@@ -1,6 +1,6 @@
 defaults:
   - algs: memit
-  - llms: llama3-8b
+  - llms: gpt-j-6b # gpt2-xl # qwen2-7b # mistral-7b # chatglm2-6b #baichuan-7b # qwen2.5-7b  llama3-8b
 
 
 gpu: 0
@@ -45,6 +45,7 @@ h_cache_dir: /scratch/hkliu/cache/edit-cache-final/h_cache  # for all llms
 zs_cache_dir: /scratch/hkliu/cache/edit-cache-final/zs_cache  # for all llms 
 data_dir: /home/svu/hkliu/model_edit/me/data
 results_dir: /scratch/hkliu/edit-result-final #per alg
+# results_dir: /home/svu/hkliu/model_edit/me/tmp
 cache_dir: /scratch/hkliu/cache/edit-cache-final #per llm
 # cache_dir: /home/svu/hkliu/model_edit/me/edit-cache-final #per llm
 

@@ -29,6 +29,7 @@ def compute_probs_correct(cfg,model,tok,prob_prompts,which_correct,
         list(chain(*prob_prompts)),#这个其实就是扁平化，[[1,2],[3]]变成[1,2,3]
         list(chain(*which_correct)),
         target_new,
+        # target_true, 
         target_true,
     )
     # Unflatten the results again into a list of lists.
@@ -36,6 +37,12 @@ def compute_probs_correct(cfg,model,tok,prob_prompts,which_correct,
     ret_probs = [probs[cutoffs[i - 1]: cutoffs[i]] for i in range(1, len(cutoffs))]
     ret_corrects = [
         targets_correct[cutoffs[i - 1]: cutoffs[i]] for i in range(1, len(cutoffs))
+    ]
+
+    # 新增：计算每个样本target_new概率-target_true概率的差值
+    ret_diff = [
+        [np.exp(-x['target_new']) - np.exp(-x['target_true']) for x in group]
+        for group in ret_probs # 这里的ret_probs是一个嵌套列表，每个子列表对应一种提示词类型（rewrite, paraphrase, neighborhood）的结果
     ]
 
     ret_probs=summarize(ret_probs, which_correct)
@@ -46,7 +53,10 @@ def compute_probs_correct(cfg,model,tok,prob_prompts,which_correct,
           } | {
               f"{key}_correct": ret_corrects[i]
               for i, key in enumerate(keys)
-          }
+          } | {
+              f"{key}_diff": ret_diff[i]
+              for i, key in enumerate(keys) 
+        }
     metrics=replace_tf_with_acc(ret)
     return metrics
 

@@ -1,5 +1,5 @@
 """
-MEMIT FE Implementation with Precomputed z Cache Support (2-memit_main.py)
+MEMIT Editing-ALL-LAYER Implementation with Precomputed z Cache Support (5-memit_main.py)
 """
 import os
 from copy import deepcopy
@@ -78,8 +78,15 @@ def apply_memit_to_model(
     :return: (1) the updated model, (2) an original copy of the weights that changed
     """
 
-    seed = 0
-    set_random_seed(seed)
+    global CONTEXT_TEMPLATES_CACHE
+    # Ensure edit-time randomness matches precompute_z.py
+    set_random_seed(int(getattr(cfg, "seed", 0)))
+    # Dropout etc. should be disabled for deterministic forward passes.
+    model.eval()
+
+    # Reset per-run caches to avoid cross-run contamination in long-lived processes.
+    CONTEXT_TEMPLATES_CACHE = None
+    covs.clear()
 
     weights_copy = {}
     device = torch.device("cuda:{}".format(cfg.gpu) if torch.cuda.is_available() else "cpu")
@@ -114,36 +121,17 @@ def apply_memit_to_model(
     cache_c = torch.zeros((len(layers), fc_dim,fc_dim), device="cpu")
     
     # Load z cache once for all batches (enables flexible batch size)
+    print("\nLoading full z cache for all layers...")
     model_cache_name = cfg.llms.name.replace("/", "-")
     dataset_name = getattr(cfg, 'data', 'unknown')
     seed_value = getattr(cfg, 'seed', 0)
-    z_method = "firstforward" # 和config里不同，这里强制使用firstforward方法，因为这是新方法独有的计算
-
-
-    v_lr = cfg.llms.get('v_lr', None)
-    steps = cfg.llms.get('v_num_grad_steps', None)
-    weight_decay = cfg.llms.get('v_weight_decay', None)
-    kl_factor = cfg.llms.get('kl_factor', None)
-    clamp_factor = cfg.llms.get('clamp_norm_factor', None)
-    print(f"Loading z cache for dataset {dataset_name}, model {model_cache_name}, method {z_method}, seed {seed_value}, v_lr {v_lr}, steps {steps}")
+    z_method = "all" # 选择all表示预计算所有层的z,每层单独优化求得的z作为每层的目标。
 
     zs_all = {layer: None for layer in cfg.llms.layers}
 
     for layer in cfg.llms.layers:
 
-        # Extra logic to construct cache file name, including v_lr and steps if applicable
-        cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}"
-        # if v_lr is not None:
-        #     cache_zs_file += f"-vlr{v_lr}"
-        # if steps is not None:
-        #     cache_zs_file += f"-steps{steps}"
-        # if weight_decay is not None:
-        #     cache_zs_file += f"-wd{weight_decay}"
-        # if kl_factor is not None:
-        #     cache_zs_file += f"-kl{kl_factor}"
-        # if clamp_factor is not None:
-        #     cache_zs_file += f"-clamp{clamp_factor}"
-        cache_zs_file += f"-layer{layer}.pt"
+        cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{layer}.pt"
     
         if os.path.isfile(cache_zs_file):
             zs_full = torch.load(cache_zs_file, map_location='cpu')  # [hidden_dim, num_all_samples]
@@ -198,7 +186,7 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
         )
     
     zs = {layer: zs_all[layer][:, sample_indices].to(device) for layer in zs_all}  # [hidden_dim, current_batch_size]
-    print(f"Extracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shapes: {[zs[layer].shape for layer in zs]}")
+    print(f"\nExtracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shapes: {[zs[layer].shape for layer in zs]}")
     
     # ========== Original computation logic (archived for reference) ==========
     # This was the old approach that computed z on-the-fly for each batch.
@@ -283,7 +271,7 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
             targets.double()
         )
         # resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
-        resid = targets  # Do not distribute residual across layers
+        resid = targets  # 此时每层目标都是单独优化的z，不需要再平均分配残差了。
 
         cov = covs[i].double()
 

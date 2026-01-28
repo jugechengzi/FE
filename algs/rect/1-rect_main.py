@@ -15,14 +15,26 @@ from util.utility import ensure_file_directory
 from .compute_ks import compute_ks
 from .compute_z import compute_z, get_module_input_output_at_words, find_fact_lookup_idx
 from omegaconf import DictConfig
+import random
 
 # Cache variable(s)
 CONTEXT_TEMPLATES_CACHE = None
-covs=[]#将K0K0T先从文件读取到cpu上，之后不用再读文件，可以显著加快速度（空间换时间），尤其是批次batch size小的时候。
-def load_cov(cfg,model,tok):
-    layers=cfg.llms.layers
+covs = []  # 将K0K0T先从文件读取到cpu上，之后不用再读文件
+
+def set_random_seed(seed=42):
+    """Set random seed for reproducibility."""
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    np.random.seed(seed)
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+def load_cov(cfg, model, tok):
+    layers = cfg.llms.layers
     for i, layer in enumerate(layers):
-        cov=get_cov(
+        cov = get_cov(
             cfg,
             model,
             tok,
@@ -31,47 +43,68 @@ def load_cov(cfg,model,tok):
             cfg.llms.mom2_n_samples,
             cfg.llms.mom2_dtype,
             force_recompute=False,
-            cache_filename_suffix=cfg.cache_filename_suffix
+            cache_filename_suffix=cfg.cache_filename_suffix,
         )
         covs.append(cov)
+
 
 def chunks(arr, n):
     """Yield successive n-sized chunks from arr."""
     for i in range(0, len(arr), n):
         yield arr[i : i + n]
 
-def get_fc_dim(model,cfg):
+
+def get_fc_dim(model, cfg):
     W_out = nethook.get_parameter(model, f"{cfg.llms.rewrite_module_tmp.format(1)}.weight")
-    fc_dim=W_out.shape[0] if W_out.shape[0]>W_out.shape[1] else W_out.shape[1]
+    fc_dim = W_out.shape[0] if W_out.shape[0] > W_out.shape[1] else W_out.shape[1]
     return fc_dim
 
-def apply_namet_to_model(
+
+def rect_norm(cfg, upd_matrix):
+    flattened_matrix = upd_matrix.flatten()
+    flattened_pos_matrix = torch.abs(upd_matrix).flatten()
+    num_elements = flattened_pos_matrix.nelement()
+    num_zeros = int(num_elements * cfg.algs.zero_prob)
+    indices_to_zero = torch.topk(flattened_pos_matrix, k=num_zeros, largest=False)[1]
+    flattened_matrix[indices_to_zero] = 0
+    upd_matrix = flattened_matrix.reshape(upd_matrix.shape)
+    return upd_matrix
+
+
+def apply_rect_to_model(
     model: AutoModelForCausalLM,
     tok: AutoTokenizer,
     requests: List[Dict],
-    cfg: DictConfig
+    cfg: DictConfig,
 ):
-    """
-    Returns a model with the desired changes.
-    :param copy: If true, will preserve the original model while creating a new one to edit.
-        Note that you are responsible for deallocating the new model's memory to avoid leaks.
-    :return: (1) the updated model, (2) an original copy of the weights that changed
-    """
+    """RECT (variant): use cached z (z_method=all) from last edit layer."""
 
-    weights_copy = {}
     device = torch.device("cuda:{}".format(cfg.gpu) if torch.cuda.is_available() else "cpu")
     requests = deepcopy(requests)
     for i, request in enumerate(requests):
+        if "sample_idx" not in request:
+            requests[i]["sample_idx"] = i
         requests[i]["target_new"] = " " + request["target_new"]
-    layers=cfg.llms.layers
-    #查看KKT是否已经计算好。
+
+    layers = cfg.llms.layers
     for i, layer in enumerate(layers):
-        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +("-" if cfg.cache_filename_suffix !="" else "")+ cfg.cache_filename_suffix + ".npz"
+        Cpathi = (
+            cfg.cache_dir
+            + "/stats/"
+            + cfg.llms.name.replace("/", "-")
+            + "/layer-"
+            + str(layer)
+            + ("-" if cfg.cache_filename_suffix != "" else "")
+            + cfg.cache_filename_suffix
+            + ".npz"
+        )
         ensure_file_directory(Cpathi)
-        if not os.path.exists(Cpathi):#then compute
-            print("The key matrix of old memory K0K0T for model {} layer {} "
-                  "does not exist and now calculate.".format(cfg.llms.name, layer))
-            cov = get_cov(
+        if not os.path.exists(Cpathi):
+            print(
+                "The key matrix of old memory K0K0T for model {} layer {} "
+                "does not exist and now calculate.".format(cfg.llms.name, layer)
+            )
+            get_cov(
                 cfg,
                 model,
                 tok,
@@ -80,53 +113,64 @@ def apply_namet_to_model(
                 cfg.llms.mom2_n_samples,
                 cfg.llms.mom2_dtype,
                 force_recompute=False,
-                cache_filename_suffix=cfg.cache_filename_suffix
+                cache_filename_suffix=cfg.cache_filename_suffix,
             )
-            #这个内部会自动保存，我们不需要再额外管。
-    load_cov(cfg,model,tok)
-    fc_dim=get_fc_dim(model,cfg)
-    cache_c = torch.zeros((len(layers), fc_dim,fc_dim), device="cpu")
+
+    load_cov(cfg, model, tok)
+    fc_dim = get_fc_dim(model, cfg)
+    cache_c = torch.zeros((len(layers), fc_dim, fc_dim), device="cpu")
+
+    model_cache_name = cfg.llms.name.replace("/", "-")
+    dataset_name = getattr(cfg, "data", "unknown")
+    seed_value = getattr(cfg, "seed", 0)
+    set_random_seed(seed_value)
+    z_method = "all"
+    z_layer = cfg.llms.layers[-1]
+    cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{z_layer}.pt"
+    if not os.path.isfile(cache_zs_file):
+        raise FileNotFoundError(
+            f"Cache file not found: {cache_zs_file}. Please pre-compute with: "
+            f"python precompute_z.py --edited_layers={','.join(map(str, cfg.llms.layers))} z_method=all num_z_samples=..."
+        )
+    zs_full = torch.load(cache_zs_file, map_location="cpu")
+    print(f"Loaded z cache from {cache_zs_file}, shape: {zs_full.shape}")
+    if zs_full.shape[1] < len(requests):
+        raise ValueError(
+            f"Insufficient cached z samples! Required: {len(requests)}, Cached: {zs_full.shape[1]}. "
+            f"Please pre-compute z for at least {len(requests)} samples using precompute_z.py"
+        )
+
     for requests_chunks in chunks(requests, cfg.bs):
-        batch_edit(cfg,model,tok,requests_chunks,device,cache_c)
+        batch_edit(cfg, model, tok, requests_chunks, device, cache_c, zs_full, z_layer)
     return model
 
-def batch_edit(cfg, model, tok, requests, device, cache_c):
-    # deltas = {}
-    # Retrieve weights that user desires to change
+
+def batch_edit(cfg, model, tok, requests, device, cache_c, zs_full, z_layer):
     weights = {
         f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight": nethook.get_parameter(
             model, f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight"
         )
         for layer in cfg.llms.layers
     }
-    # Compute z for final layer
-    context_templates = get_context_templates(model, tok)
-    z_layer = cfg.llms.layers[-1]
-    z_list = []
 
-    for request in requests:
-        #add_noise to obtain more robust value by simply changing the padding_side。
-        tok.padding_side="left"
-        cur_z = compute_z(
-            model,
-            tok,
-            request,
-            cfg,
-            z_layer,
-            context_templates,
+    context_templates = get_context_templates(model, tok)
+
+    sample_indices = [req["sample_idx"] for req in requests]
+    max_cached_idx = zs_full.shape[1] - 1
+    max_requested_idx = max(sample_indices)
+    if max_requested_idx > max_cached_idx:
+        raise IndexError(
+            f"Sample index out of bounds! Requested index: {max_requested_idx}, Max cached index: {max_cached_idx}. "
+            f"Cache shape: {zs_full.shape}"
         )
-        tok.padding_side = "right"
-        z_list.append(cur_z)
-    zs = torch.stack(z_list, dim=1)#[dim,bs]
+    zs = zs_full[:, sample_indices].to(device)
 
     for i, layer in enumerate(cfg.llms.layers):
         print(f"\n\nLAYER {layer}\n")
-        # Get current model activations
         layer_ks = compute_ks(model, tok, requests, cfg, layer, context_templates).T
         print(f"Writing {layer_ks.size(1)} key/value pair(s) into layer {layer}")
 
         if cfg.negetive_prompt_test:
-            # Compute residual error
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
@@ -137,7 +181,6 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
         else:
-            # Compute residual error
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
@@ -147,60 +190,45 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
                 module_template=cfg.llms.layer_module_tmp,
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
-        targets = zs - cur_zs#[dim,bs]
+        targets = zs - cur_zs
         print("z error", torch.linalg.norm(targets, dim=0).mean())
 
-        repeat_factor = (layer_ks.size(1) // targets.size(1))
+        repeat_factor = layer_ks.size(1) // targets.size(1)
         targets = targets.repeat_interleave(repeat_factor, dim=1)
-        resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
+        resid = targets / (len(cfg.llms.layers) - i)
 
         cov = covs[i]
-        upd_type = torch.float32
-        layer_ks = layer_ks.to(upd_type)
-        resid = resid.to(upd_type)
+        upd_type = torch.float
 
         if cfg.algs.L2 != 0:
             upd_matrix = torch.linalg.solve(
-                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+
-                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
+                layer_ks @ layer_ks.T
+                + cache_c[i, :, :].to(device)
+                + cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
                 layer_ks.to(upd_type) @ resid.T,
             )
         else:
-            coef=cfg.llms.mom2_update_weight[i]
+            coef = cfg.llms.mom2_update_weight[i]
             upd_matrix = torch.linalg.solve(
-                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+coef*cov.to(device)+
-                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
+                layer_ks @ layer_ks.T
+                + cache_c[i, :, :].to(device)
+                + coef * cov.to(device)
+                + cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
                 layer_ks.to(upd_type) @ resid.T,
             )
+        upd_matrix = rect_norm(cfg, upd_matrix)
         if cfg.algs.add_old_keys:
             cache_c[i, :, :] += (layer_ks @ layer_ks.T).cpu()
-        # Adjust update matrix shape
+
         weight_name = f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight"
         upd_matrix = upd_matrix_match_shape(upd_matrix, weights[weight_name].shape)
         print("orig norm", torch.linalg.norm(weights[weight_name]))
         print("upd norm", torch.linalg.norm(upd_matrix))
         with torch.no_grad():
             weights[weight_name][...] = weights[weight_name] + upd_matrix
-            # deltas[weight_name] = upd_matrix
-
-        # cov.cpu()
-        # for x in [layer_ks, cur_zs, targets]:
-        #     x.cpu()
-        #     del x
-        # torch.cuda.empty_cache()
-    #
-    # if cfg.algs.add_old_keys:
-    #     for i, layer in enumerate(cfg.llms.layers):
-    #         layer_ks = compute_ks(model, tok, requests, cfg, layer, context_templates).T
-    #         cache_c[i, :, :] += (layer_ks @ layer_ks.T).cpu()
 
 
 def upd_matrix_match_shape(matrix: torch.Tensor, shape: torch.Size) -> torch.Tensor:
-    """
-    GPT-2 and GPT-J have transposed weight representations.
-    Returns a matrix that matches the desired shape, else raises a ValueError
-    """
-
     if matrix.shape == shape:
         return matrix
     elif matrix.T.shape == shape:
@@ -227,7 +255,7 @@ def get_context_templates(model, tok):
                     max_out_len=length,
                 )
             ]
-            for length, n_gen in [(10, 5)]  # Be careful about changing this.
+            for length, n_gen in [(10, 5)]
         ]
         print(f"Cached context templates {CONTEXT_TEMPLATES_CACHE}")
 

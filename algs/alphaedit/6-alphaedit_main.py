@@ -1,7 +1,6 @@
 """
-AlphaEdit original implementation with traditional zs cache (0-alphaedit_main.py)
+AlphaEdit BLUE implementation with precomputed Z cache support. (6-alphaedit_main.py)
 """
-
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -53,6 +52,8 @@ def apply_alphaedit_to_model(
     device = torch.device("cuda:{}".format(cfg.gpu) if torch.cuda.is_available() else "cpu")
     requests = deepcopy(requests)
     for i, request in enumerate(requests):
+        if "sample_idx" not in request:
+            requests[i]["sample_idx"] = i
         requests[i]["target_new"] = " " + request["target_new"]
     layers=cfg.llms.layers
     # compute the null space project P.
@@ -67,12 +68,39 @@ def apply_alphaedit_to_model(
     load_project(cfg)
     fc_dim=get_fc_dim(model,cfg)
     cache_c = torch.zeros((len(layers), fc_dim,fc_dim), device="cpu")
+
+    # Load z cache once for all batches (enables flexible batch size)
+    model_cache_name = cfg.llms.name.replace("/", "-")
+    dataset_name = getattr(cfg, 'data', 'unknown')
+    seed_value = getattr(cfg, 'seed', 0)
+    z_method = "all"  # Per-layer z targets
+
+    zs_all = {layer: None for layer in cfg.llms.layers}
+    for layer in cfg.llms.layers:
+        cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{layer}.pt"
+        if os.path.isfile(cache_zs_file):
+            zs_full = torch.load(cache_zs_file, map_location='cpu')
+            print(f"Loaded full z cache from {cache_zs_file}, shape: {zs_full.shape}")
+            zs_all[layer] = zs_full
+            num_cached_samples = zs_full.shape[1]
+            num_required_samples = len(requests)
+            if num_cached_samples < num_required_samples:
+                raise ValueError(
+                    f"Insufficient cached z samples! "
+                    f"Required: {num_required_samples}, Cached: {num_cached_samples}. "
+                    f"Please pre-compute z for at least {num_required_samples} samples using precompute_z.py"
+                )
+        else:
+            raise FileNotFoundError(
+                f"Cache file not found: {cache_zs_file}. Please ensure the cache file exists before running."
+            )
+
     for requests_chunks in chunks(requests, cfg.bs):
-        batch_edit(cfg,model,tok,requests_chunks,device,cache_c)
+        batch_edit(cfg,model,tok,requests_chunks,device,cache_c,zs_all)
     return model
 
 
-def batch_edit(cfg,model,tok,requests,device,cache_c):
+def batch_edit(cfg,model,tok,requests,device,cache_c,zs_all):
     # deltas = {}
     # Retrieve weights that user desires to change
     weights = {
@@ -81,22 +109,19 @@ def batch_edit(cfg,model,tok,requests,device,cache_c):
         )
         for layer in cfg.llms.layers
     }
-    # Compute z for final layer
     context_templates = get_context_templates(model, tok)
-    z_layer = cfg.llms.layers[-1]
-    z_list = []
 
-    for request in requests:
-        cur_z = compute_z(
-            model,
-            tok,
-            request,
-            cfg,
-            z_layer,
-            context_templates,
+    sample_indices = [req["sample_idx"] for req in requests]
+    max_cached_idx = max(zs_all[layer].shape[1] for layer in zs_all) - 1
+    max_requested_idx = max(sample_indices)
+    if max_requested_idx > max_cached_idx:
+        raise IndexError(
+            f"Sample index out of bounds! "
+            f"Requested index: {max_requested_idx}, Max cached index: {max_cached_idx}. "
+            f"Cache shapes: {[zs_all[layer].shape for layer in zs_all]}"
         )
-        z_list.append(cur_z)
-    zs = torch.stack(z_list, dim=1)
+
+    zs = {layer: zs_all[layer][:, sample_indices].to(device) for layer in zs_all}
 
     for i, layer in enumerate(cfg.llms.layers):
         print(f"\n\nLAYER {layer}\n")
@@ -111,7 +136,7 @@ def batch_edit(cfg,model,tok,requests,device,cache_c):
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                z_layer,
+                layer,
                 context_templates=[request["negetive_prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
                 module_template=cfg.llms.layer_module_tmp,
@@ -122,24 +147,31 @@ def batch_edit(cfg,model,tok,requests,device,cache_c):
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                z_layer,
+                layer,
                 context_templates=[request["prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
                 module_template=cfg.llms.layer_module_tmp,
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
-        targets = zs - cur_zs
+        targets = zs[layer] - cur_zs
         print("z error", torch.linalg.norm(targets, dim=0).mean())
 
         repeat_factor = (layer_ks.size(1) // targets.size(1))
         targets = targets.repeat_interleave(repeat_factor, dim=1)
-        resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
-        upd_type=torch.float
-        upd_matrix = torch.linalg.solve(
-                Pi @ (layer_ks @ layer_ks.T + cache_c[i,:,:].to(device)) +
-                cfg.algs.L2*torch.eye(layer_ks.shape[0], dtype=upd_type,device=device),
-            Pi @ layer_ks.to(upd_type) @ resid.T
+        resid = targets  # Do not distribute residual across layers
+
+        # Keep linear algebra dtypes consistent (cached z / activations may be bf16).
+        upd_type = torch.float32
+        Pi_upd = Pi.to(dtype=upd_type)
+        ks = layer_ks.to(dtype=upd_type)
+        resid = resid.to(dtype=upd_type)
+        cache = cache_c[i, :, :].to(device=device, dtype=upd_type)
+
+        system = Pi_upd @ (ks @ ks.T + cache) + cfg.algs.L2 * torch.eye(
+            ks.shape[0], dtype=upd_type, device=device
         )
+        rhs = Pi_upd @ ks @ resid.T
+        upd_matrix = torch.linalg.solve(system, rhs)
         #用完了cache_c[i]之后更新旧记忆。
         if cfg.algs.add_old_keys:
             cache_c[i, :, :] += (layer_ks @ layer_ks.T).cpu()
@@ -150,7 +182,7 @@ def batch_edit(cfg,model,tok,requests,device,cache_c):
         print("orig norm", torch.linalg.norm(weights[weight_name]))
         print("upd norm", torch.linalg.norm(upd_matrix))
         with torch.no_grad():
-            weights[weight_name][...] = weights[weight_name] + upd_matrix
+            weights[weight_name][...] = weights[weight_name] + upd_matrix.to(dtype=weights[weight_name].dtype)
             # deltas[weight_name] = upd_matrix
 
         # Pi.cpu()

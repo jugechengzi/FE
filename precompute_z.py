@@ -270,7 +270,83 @@ def compute_z_batch_first_forward(
     zs_dict = {first_layer: z_first}
     
     for sample_idx, request in enumerate(tqdm(data[:num_samples], desc="Forward propagating z")):
-        
+
+        # # Forward propagation through layers
+        # prompt = [
+        #     context.format(request["prompt"])
+        #     for context_types in context_templates
+        #     for context in context_types
+        # ]
+        # input_tok = tok(
+        #     [p.format(request["subject"]) for p in prompt],
+        #     return_tensors="pt",
+        #     padding=True,
+        # ).to(device)
+
+        # # Find lookup index
+        # fact_token = cfg.llms.fact_token
+        # lookup_idx = [
+        #     find_fact_lookup_idx(
+        #         prompt, request["subject"], tok, fact_token, verbose=False
+        #     )
+        #     for _, prompt in enumerate(prompt)
+        # ]
+
+        # def edit_output_fn(cur_out, cur_layer_name):
+        #     target_hidden = cur_out[0] if isinstance(cur_out, tuple) else cur_out
+
+        #     first_layer_module = cfg.llms.layer_module_tmp.format(first_layer)
+        #     # Only inject z at the first layer
+        #     # For all prompts, inject the same zs from first layer computation
+        #     if cur_layer_name == first_layer_module:
+        #         z_to_inject = zs_dict[first_layer][:, sample_idx]
+        #         if sample_idx == 0: # 只打印第一个样本
+        #             print(f"\n[DEBUG Layer {cur_layer_name}]")
+        #             print(f"  target_hidden shape: {target_hidden.shape}")
+        #             print(f"  z_to_inject shape: {z_to_inject.shape}")
+        #             print(f"  lookup_idx: {lookup_idx}")
+
+        #         for batch_idx, seq_idx in enumerate(lookup_idx):
+
+        #             if target_hidden.shape[0]==len(lookup_idx):
+        #                 target_hidden[batch_idx, seq_idx, :] = z_to_inject
+        #             else:
+        #                 target_hidden[seq_idx, batch_idx, :] = z_to_inject
+        #     return cur_out
+
+        # with torch.no_grad():
+        #     with nethook.TraceDict(
+        #         module=model,
+        #         layers=[cfg.llms.layer_module_tmp.format(l) for l in layers_sorted],  # Must trace ALL layers including first_layer!
+        #         edit_output=edit_output_fn,
+        #     ) as tr:
+        #         model(**input_tok)
+
+        #     for layer in other_layers:
+        #         layer_module = cfg.llms.layer_module_tmp.format(layer)
+        #         output = tr[layer_module].output
+        #         c_z_raw = output[0] if isinstance(output, tuple) else output
+
+        #         # Extract at lookup positions (match memit_a_main.py logic)
+        #         c_z_list = []
+        #         for batch_idx in range(len(lookup_idx)):
+        #             cur_lookup_idx = lookup_idx[batch_idx]
+        #             if c_z_raw.dim() == 3:
+        #                 if c_z_raw.shape[0] == len(lookup_idx):
+        #                     c_z = c_z_raw[batch_idx, cur_lookup_idx, :]
+        #                 else:
+        #                     c_z = c_z_raw[cur_lookup_idx, batch_idx, :]
+        #             else:
+        #                 c_z = c_z_raw[cur_lookup_idx, :]
+        #             c_z_list.append(c_z.detach().clone())
+                    
+        #         # Average over prompts to get single z per sample
+        #         c_z_avg = torch.stack(c_z_list, dim=0).mean(dim=0)
+
+        #         if layer not in zs_dict:
+        #             zs_dict[layer] = []
+        #         zs_dict[layer].append(c_z_avg)
+
         # Forward propagate through layers
         prompt = request["prompt"].format(request["subject"])
         input_tok = tok(prompt, return_tensors="pt").to(device)
@@ -368,6 +444,11 @@ def precompute_z(cfg: DictConfig) -> None:
     print(f"Edit Layers: {edited_layers}")
     print(f"Target Samples: {num_z_samples}")
     print(f"Cache Dir: {cfg.zs_cache_dir}")
+
+    # Load v_lr and steps if applicable
+    v_lr = cfg.llms.get('v_lr', None)
+    steps = cfg.llms.get('v_num_grad_steps', None)
+    print(f"v_lr: {v_lr}, v_num_grad_steps: {steps}")
     
     # Set random seed 这里的seed是全局的seed，在这里设置好之后，后续所有的计算都会使用这个seed，包括z的计算
     set_random_seed(cfg.seed)
@@ -391,6 +472,9 @@ def precompute_z(cfg: DictConfig) -> None:
         torch_dtype=torch_dtype,
         trust_remote_code=True
     ).to(device)
+    # IMPORTANT: z precomputation must run with dropout disabled.
+    # This should match edit-time behavior (model.eval()) to avoid RNG-driven drift.
+    model.eval()
     tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     
     # Setup tokenizer
@@ -425,7 +509,7 @@ def precompute_z(cfg: DictConfig) -> None:
         # Check cache for all layers
         all_cached = True
         for layer in edited_layers:
-            cached_count = get_cached_z_count(cfg.zs_cache_dir, dataset, model_name, z_method, layer, cfg.seed)
+            cached_count = get_cached_z_count(cfg.zs_cache_dir, dataset, model_name, z_method, layer, cfg.seed, v_lr, steps)
             if cached_count < num_z_samples:
                 all_cached = False
                 break
@@ -440,9 +524,9 @@ def precompute_z(cfg: DictConfig) -> None:
         
         for layer, zs in zs_dict.items():
             print(f"\nSaving z for layer {layer}, shape: {zs.shape}")
-            save_z_batch(cfg.zs_cache_dir, dataset, model_name, z_method, layer, zs, append=False, seed=cfg.seed)
+            save_z_batch(cfg.zs_cache_dir, dataset, model_name, z_method, layer, zs, append=False, seed=cfg.seed, v_lr=v_lr, steps=steps)
         
-        print_z_cache_status(cfg.zs_cache_dir, dataset, model_name)
+        print_z_cache_status(cfg.zs_cache_dir, dataset, model_name, v_lr, steps)
     
     elif strategy == "first_forward":
         # Auto-detect first layer
@@ -450,19 +534,19 @@ def precompute_z(cfg: DictConfig) -> None:
         other_layers = [l for l in edited_layers if l != first_layer]
         
         # Check cache for first layer and others
-        first_cached = get_cached_z_count(cfg.zs_cache_dir, dataset, model_name, z_method, first_layer, cfg.seed)
+        first_cached = get_cached_z_count(cfg.zs_cache_dir, dataset, model_name, z_method, first_layer, cfg.seed, v_lr, steps)
         
         if first_cached >= num_z_samples:
             all_other_cached = True
             for layer in other_layers:
-                other_cached_count = get_cached_z_count(cfg.zs_cache_dir, dataset, model_name, z_method, layer, cfg.seed)
+                other_cached_count = get_cached_z_count(cfg.zs_cache_dir, dataset, model_name, z_method, layer, cfg.seed, v_lr, steps)
                 if other_cached_count < num_z_samples:
                     all_other_cached = False
                     break
             
             if all_other_cached:
                 print(f"Cache already contains all required samples for all layers")
-                print_z_cache_status(cfg.zs_cache_dir, dataset, model_name)
+                print_z_cache_status(cfg.zs_cache_dir, dataset, model_name, v_lr, steps)
                 return
         
         print(f"First layer auto-detected: {first_layer}")
@@ -473,9 +557,9 @@ def precompute_z(cfg: DictConfig) -> None:
         
         for layer, zs in zs_dict.items():
             print(f"\nSaving z for layer {layer}, shape: {zs.shape}")
-            save_z_batch(cfg.zs_cache_dir, dataset, model_name, z_method, layer, zs, append=False, seed=cfg.seed)
+            save_z_batch(cfg.zs_cache_dir, dataset, model_name, z_method, layer, zs, append=False, seed=cfg.seed, v_lr=v_lr, steps=steps)
         
-        print_z_cache_status(cfg.zs_cache_dir, dataset, model_name)
+        print_z_cache_status(cfg.zs_cache_dir, dataset, model_name, v_lr, steps)
     
     else:
         raise ValueError(f"Unknown strategy: {strategy}")

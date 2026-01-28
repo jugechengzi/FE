@@ -192,6 +192,8 @@ def compute_z(
 
     # Optimizer
     opt = torch.optim.Adam([delta], lr=cfg.llms.v_lr)
+    print(f"Optimizing with lr {cfg.llms.v_lr}, num grad steps {cfg.llms.v_num_grad_steps}")
+    print(f"Weight decay: {cfg.llms.v_weight_decay}, Clamp factor: {cfg.llms.clamp_norm_factor}")
     nethook.set_requires_grad(False, model)
 
     trace_layers = [

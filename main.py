@@ -139,6 +139,9 @@ def main(cfg: DictConfig) -> None:
     # 打印确认，方便在日志中排查
     print(f"Tokenizer Setup: Pad Token = {tok.pad_token}, Pad ID = {tok.pad_token_id}, Side = {tok.padding_side}")
 
+    # print(model.transformer.h[8])
+    # return
+
     apply_algo = ALG_DICT[cfg.algs.name]
     data=load_data(cfg)
     if cfg.unlearning_ab:
@@ -287,6 +290,22 @@ def main(cfg: DictConfig) -> None:
             json.dump(post_metrics, f, ensure_ascii=False, indent=2)
             f.write("\n\n")
         print("End Evaluating the Edited Model")
+
+        # write to local csv file
+        csv_file = cfg.results_dir + "/summary_results.csv"
+        file_exists = os.path.isfile(csv_file)
+        with open(csv_file, "a", encoding="utf-8") as f:
+            if not file_exists:
+                # write header
+                headers = ['model', 'algo', 'data', 'v_lr', 'v_num_grad_steps', 'num_edits'] + list(post_metrics.keys())
+                f.write(",".join(headers) + "\n")
+            
+            # only write metrics with v_lr, v_num_grad_steps, num_edits, model_name, alg_name
+            values = [cfg.llms.name, cfg.algs.name, cfg.data, str(cfg.llms.get('v_lr', 'N/A')), str(cfg.llms.get('v_num_grad_steps', 'N/A')), str(cfg.get('num_edits', 'N/A'))]
+            # No add timestamp to csv
+            values += [str(post_metrics[key]) for key in post_metrics.keys()]
+            f.write(",".join(values) + "\n")
+
         if cfg.neighborhood_logits:
             if cfg.data == "zsre_mend_eval_19086":
                 from evals.zsre import target_true_logits,target_new_logits
@@ -319,6 +338,9 @@ def main(cfg: DictConfig) -> None:
             print_dict(post_metrics)
         else:
             save_model(edited_model,cfg)
+    
+    # write evaluation output to txt under the same folder as model saving
+
 
 if __name__ == "__main__":
     main()

@@ -152,7 +152,8 @@ def batch_edit(cfg, model, tok, requests, device, cache_c):
 
         repeat_factor = (layer_ks.size(1) // targets.size(1))
         targets = targets.repeat_interleave(repeat_factor, dim=1)
-        resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
+        # resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
+        resid = targets / np.sqrt(len(cfg.llms.layers) - i) # Distribute residual across layers by sqrt, not linear
 
         cov = covs[i]
         upd_type = torch.float

@@ -5,7 +5,7 @@
 #PBS -N zsre_emmet
 #PBS -q auto
 #PBS -l select=1:ngpus=1 
-#PBS -l walltime=06:00:00
+#PBS -l walltime=03:00:00
 
 cd $PBS_O_WORKDIR; 
 
@@ -15,7 +15,7 @@ module load singularity
 # 设置lambda变量
 ALGO=emmet
 LAMBDA=1.5e4
-MODEL_NAME="${LAMBDA}cov-bs2000"
+MODEL_NAME="z-${LAMBDA}cov-bs2000"
 
 singularity exec $image bash << EOF > stdout_zsre_${LAMBDA}_${ALGO}.$PBS_JOBID 2> stderr_zsre_${LAMBDA}_${ALGO}.$PBS_JOBID 
 source /hpctmp/hkliu/virtualenvs/memit/bin/activate
@@ -27,26 +27,26 @@ export HUGGINGFACE_HUB_TOKEN=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
 cd /home/svu/hkliu/model_edit/me
 
 echo "================================"
-echo " 训练模型 (method = ${ALGO}, MCF， llama3-8b) "
+echo " 训练模型 (method = ${ALGO}, ZSRE， gpt2-xl) "
 echo "================================"
-python main.py algs=${ALGO} llms=llama3-8b data=zsre_mend_eval_19086 save_name="${MODEL_NAME}" num_edits=2000 bs=2000
+python main.py algs=${ALGO} llms=gpt2-xl data=zsre_mend_eval_19086 save_name="${MODEL_NAME}" num_edits=2000 bs=2000
 
 
 echo "================================"
-echo "Step 1: 原始指标评测 (method = ${ALGO}, MCF, llama3-8b)"
+echo "Step 1: 原始指标评测 (method = ${ALGO}, ZSRE, gpt2-xl)"
 echo "================================"
-python main.py algs=${ALGO} llms=llama3-8b data=zsre_mend_eval_19086 test_only=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}"
-
-echo ""
-echo "================================"
-echo "Step 2: 生成Neighborhood Logits (method = ${ALGO}, MCF, llama3-8b)"
-echo "================================"
-python main.py algs=${ALGO} llms=llama3-8b data=zsre_mend_eval_19086 test_only=True neighborhood_logits=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}-neighborhood-logits"
-
+python main.py algs=${ALGO} llms=gpt2-xl data=zsre_mend_eval_19086 test_only=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}"
 
 echo ""
 echo "================================"
-echo "All steps completed for ${ALGO} with MCF!"
+echo "Step 2: 生成Neighborhood Logits (method = ${ALGO}, ZSRE, gpt2-xl)"
+echo "================================"
+python main.py algs=${ALGO} llms=gpt2-xl data=zsre_mend_eval_19086 test_only=True neighborhood_logits=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}-neighborhood-logits"
+
+
+echo ""
+echo "================================"
+echo "All steps completed for ${ALGO} with ZSRE!"
 echo "================================"
 
 EOF

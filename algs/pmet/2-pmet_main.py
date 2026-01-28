@@ -1,13 +1,10 @@
-"""
-MEMIT FE Implementation with Precomputed z Cache Support (2-memit_main.py)
-"""
 import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import time
-import torch
+
 import numpy as np
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from locate_edit_utils.layer_stats import get_cov
@@ -18,17 +15,6 @@ from util.utility import ensure_file_directory
 from .compute_ks import compute_ks
 from .compute_z import compute_z, get_module_input_output_at_words, find_fact_lookup_idx
 from omegaconf import DictConfig
-import random
-
-def set_random_seed(seed=42):
-    """Set random seed for reproducibility."""
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    np.random.seed(seed)
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
 
 # Cache variable(s)
 CONTEXT_TEMPLATES_CACHE = None
@@ -47,12 +33,6 @@ def load_cov(cfg,model,tok):
             force_recompute=False,
             cache_filename_suffix=cfg.cache_filename_suffix
         )
-        if cfg.cov_mode == "random":
-            print("Using random covariance matrix!")
-            cov = torch.randn_like(cov)
-        if cfg.cov_mode == "identity":
-            print("Using identity covariance matrix!")
-            cov = torch.eye(cov.shape[0])
         covs.append(cov)
 
 def chunks(arr, n):
@@ -65,7 +45,7 @@ def get_fc_dim(model,cfg):
     fc_dim=W_out.shape[0] if W_out.shape[0]>W_out.shape[1] else W_out.shape[1]
     return fc_dim
 
-def apply_memit_to_model(
+def apply_pmet_to_model(
     model: AutoModelForCausalLM,
     tok: AutoTokenizer,
     requests: List[Dict],
@@ -78,21 +58,21 @@ def apply_memit_to_model(
     :return: (1) the updated model, (2) an original copy of the weights that changed
     """
 
-    seed = 0
-    set_random_seed(seed)
-
     weights_copy = {}
     device = torch.device("cuda:{}".format(cfg.gpu) if torch.cuda.is_available() else "cpu")
     requests = deepcopy(requests)
     for i, request in enumerate(requests):
-        # Add sample index if not already present (for z extraction)
-        if "sample_idx" not in request:
-            requests[i]["sample_idx"] = i
         requests[i]["target_new"] = " " + request["target_new"]
+
+        # 这里加入sample idx，方便后续从z缓存中抽取对应的z。
+        # 这里是暂时的解决方案，后续需要改成加到precompute_z.py中去。
+        if "sample_idx" not in requests[i]:
+            requests[i]["sample_idx"] = i
+
     layers=cfg.llms.layers
     #查看KKT是否已经计算好。
     for i, layer in enumerate(layers):
-        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) +("-" if cfg.cache_filename_suffix !="" else "") + cfg.cache_filename_suffix + ".npz"
+        Cpathi = cfg.cache_dir + "/stats/"+ cfg.llms.name.replace("/","-") + "/layer-" + str(layer) + "-local.npz"
         ensure_file_directory(Cpathi)
         if not os.path.exists(Cpathi):#then compute
             print("The key matrix of old memory K0K0T for model {} layer {} "
@@ -112,12 +92,13 @@ def apply_memit_to_model(
     load_cov(cfg,model,tok)
     fc_dim=get_fc_dim(model,cfg)
     cache_c = torch.zeros((len(layers), fc_dim,fc_dim), device="cpu")
-    
+
+
     # Load z cache once for all batches (enables flexible batch size)
     model_cache_name = cfg.llms.name.replace("/", "-")
     dataset_name = getattr(cfg, 'data', 'unknown')
     seed_value = getattr(cfg, 'seed', 0)
-    z_method = "firstforward" # 和config里不同，这里强制使用firstforward方法，因为这是新方法独有的计算
+    z_method = "mlp_firstforward" # 和config里不同，这里强制使用firstforward方法，因为这是新方法独有的计算
 
 
     v_lr = cfg.llms.get('v_lr', None)
@@ -133,10 +114,10 @@ def apply_memit_to_model(
 
         # Extra logic to construct cache file name, including v_lr and steps if applicable
         cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}"
-        # if v_lr is not None:
-        #     cache_zs_file += f"-vlr{v_lr}"
-        # if steps is not None:
-        #     cache_zs_file += f"-steps{steps}"
+        if v_lr is not None:
+            cache_zs_file += f"-vlr{v_lr}"
+        if steps is not None:
+            cache_zs_file += f"-steps{steps}"
         # if weight_decay is not None:
         #     cache_zs_file += f"-wd{weight_decay}"
         # if kl_factor is not None:
@@ -168,12 +149,7 @@ def apply_memit_to_model(
     return model
 
 def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
-    """
-    Edit model weights for a batch of requests.
-    
-    Args:
-        zs_all: Dictionary of full z cache tensors per layer, loaded once for all batches
-    """
+    # deltas = {}
     # Retrieve weights that user desires to change
     weights = {
         f"{cfg.llms.rewrite_module_tmp.format(layer)}.weight": nethook.get_parameter(
@@ -181,8 +157,9 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
         )
         for layer in cfg.llms.layers
     }
+
     context_templates = get_context_templates(model, tok)
-    
+
     # Extract z for current batch by sample indices
     # This enables flexible batch size without recomputing z!
     sample_indices = [req["sample_idx"] for req in requests]
@@ -199,103 +176,65 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
     
     zs = {layer: zs_all[layer][:, sample_indices].to(device) for layer in zs_all}  # [hidden_dim, current_batch_size]
     print(f"Extracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shapes: {[zs[layer].shape for layer in zs]}")
-    
-    # ========== Original computation logic (archived for reference) ==========
-    # This was the old approach that computed z on-the-fly for each batch.
-    # Pros: No need to pre-compute; Cons: Slow, recomputes same z multiple times
-    # 
-    # z_list = []
-    # z_layer = 8
-    # for request in requests:
-    #     cur_z = compute_z(
-    #         model,
-    #         tok,
-    #         request,
-    #         cfg,
-    #         z_layer,
-    #         context_templates,
-    #     )
-    #     z_list.append(cur_z)
-    # zs = torch.stack(z_list, dim=1)  # [dim, bs]
-    # ========== End of archived computation logic ==========
-
-    # Note: 现在的zs已经是从文件中加载好的了，而且是已经整合好的batch形式，所以不需要再一个一个提取和堆叠了。同时新增了batch size的支持，可以灵活调整批次大小，避免每次读取和使用只能是存储的全部数据量。
-
-    # 比较计算的zs和从文件加载的zs是否一致（调试用）
-    # zs_list = []
-    # for i, request in enumerate(requests):
-    #     cur_z_check = compute_z(
-    #         model,
-    #         tok,
-    #         request,
-    #         cfg,
-    #         z_layer,
-    #         context_templates,
-    #     ).to(device)
-    #     diff = torch.linalg.norm(cur_z_check - zs[:, i])
-    #     zs_list.append(cur_z_check)
-    #     if diff > 1e-4:
-    #         print(f"Warning: z mismatch for request index {i}, norm difference: {diff.item()}")
-    #     else:
-    #         print(f"z match confirmed for request index {i}, norm difference: {diff.item()}")
-    
-    # input("Press Enter to continue with the editing...")
-
-
 
     for i, layer in enumerate(cfg.llms.layers):
         print(f"\n\nLAYER {layer}\n")
         # Get current model activations
+        # layer_ks = compute_ks(model, tok, requests, cfg, cfg.llms.rewrite_module_tmp,layer, context_templates)
         layer_ks = compute_ks(model, tok, requests, cfg, layer, context_templates).T
         print(f"Writing {layer_ks.size(1)} key/value pair(s) into layer {layer}")
 
         if cfg.negetive_prompt_test:
             # Compute residual error
+            '''改动之处'''
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                layer, # 要求的是当前层的输出，而不是z_layer
+                layer, # 改成当前层
                 context_templates=[request["negetive_prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
-                module_template=cfg.llms.layer_module_tmp,
+                module_template=cfg.llms.rewrite_module_tmp, #######这里原来是层输出，现在变成了mlp输出。
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
         else:
             # Compute residual error
+            '''改动之处'''
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                layer, # 注意这里是layer，不是z_layer
+                layer, # 改成当前层
                 context_templates=[request["prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
-                module_template=cfg.llms.layer_module_tmp,
+                module_template=cfg.llms.rewrite_module_tmp, #######这里原来是层输出，现在变成了mlp输出。
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
-
         targets = zs[layer] - cur_zs#[dim,bs]
         print("z error", torch.linalg.norm(targets, dim=0).mean())
 
         repeat_factor = (layer_ks.size(1) // targets.size(1))
         targets = targets.repeat_interleave(repeat_factor, dim=1)
-
-        layer_ks, targets = (
-            layer_ks.double(),
-            targets.double()
-        )
         # resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
         resid = targets  # Do not distribute residual across layers
 
-        cov = covs[i].double()
+        cov = covs[i]
+        upd_type = torch.float32
+        cov = cov.to(upd_type)
+        resid = resid.to(upd_type)
+        layer_ks = layer_ks.to(upd_type)
 
-        start_time = time.time()
-        coef=cfg.llms.mom2_update_weight[i]
-        upd_matrix = torch.linalg.solve(
-            layer_ks @ layer_ks.T + cache_c[i, :, :].to(device).double()+coef*cov.to(device)+
-            cfg.algs.L2 * torch.eye(layer_ks.shape[0], device=device).double(),
-            layer_ks @ resid.T,
-        )
-        end_time = time.time()
-        print(f"Solved for update matrix in {end_time - start_time:.2f} seconds")
+        if cfg.algs.L2 != 0:
+            upd_matrix = torch.linalg.solve(
+                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+
+                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
+                layer_ks.to(upd_type) @ resid.T,
+            )
+        else:
+            coef=cfg.llms.mom2_update_weight[i]
+            upd_matrix = torch.linalg.solve(
+                layer_ks @ layer_ks.T + cache_c[i, :, :].to(device)+coef*cov.to(device)+
+                cfg.algs.L2 * torch.eye(layer_ks.shape[0], dtype=upd_type, device=device),
+                layer_ks.to(upd_type) @ resid.T,
+            )
         if cfg.algs.add_old_keys:
             cache_c[i, :, :] += (layer_ks @ layer_ks.T).cpu()
         # Adjust update matrix shape
@@ -337,17 +276,6 @@ def upd_matrix_match_shape(matrix: torch.Tensor, shape: torch.Size) -> torch.Ten
 
 
 def get_context_templates(model, tok):
-    """
-    Get context templates for z computation.
-    
-    CRITICAL: This function MUST produce identical results in both:
-    1. precompute_z.py (when caching z vectors)
-    2. memit_main.py (when using cached z vectors)
-    
-    The templates are generated using generate_fast with a fixed seed.
-    If the random seed or model state differs between precompute and inference,
-    the z vectors will NOT match, causing large edit errors!
-    """
     global CONTEXT_TEMPLATES_CACHE
 
     if CONTEXT_TEMPLATES_CACHE is None:

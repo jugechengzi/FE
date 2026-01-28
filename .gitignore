@@ -8,3 +8,12 @@ outputs/
 
 *.png
 *.pdf
+tc/
+test_file/
+mlp_type/
+experiments/results/
+
+# 忽略jobs/和jobs/下的所有内容
+jobs/*
+jobs/jobs_methods_2001/
+jobs/jobs_methods_2001_zsre/

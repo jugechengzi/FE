@@ -1,5 +1,7 @@
 """
-MEMIT FE Implementation with Precomputed z Cache Support (2-memit_main.py)
+MEMIT Original Implementation with Precomputed z Cache Support (1-memit_main.py)
+
+Notice: by changing the editing layers specified in the config, this code can also implement BLUE by only editing the first and last layers. It is also applicable to other multi-layer editing methods (which require your creative design!)
 """
 import os
 from copy import deepcopy
@@ -117,62 +119,40 @@ def apply_memit_to_model(
     model_cache_name = cfg.llms.name.replace("/", "-")
     dataset_name = getattr(cfg, 'data', 'unknown')
     seed_value = getattr(cfg, 'seed', 0)
-    z_method = "firstforward" # 和config里不同，这里强制使用firstforward方法，因为这是新方法独有的计算
+    z_method = "all"
+    z_layer = cfg.llms.layers[-1]  # Use the last layer for z computation
 
-
-    v_lr = cfg.llms.get('v_lr', None)
-    steps = cfg.llms.get('v_num_grad_steps', None)
-    weight_decay = cfg.llms.get('v_weight_decay', None)
-    kl_factor = cfg.llms.get('kl_factor', None)
-    clamp_factor = cfg.llms.get('clamp_norm_factor', None)
-    print(f"Loading z cache for dataset {dataset_name}, model {model_cache_name}, method {z_method}, seed {seed_value}, v_lr {v_lr}, steps {steps}")
-
-    zs_all = {layer: None for layer in cfg.llms.layers}
-
-    for layer in cfg.llms.layers:
-
-        # Extra logic to construct cache file name, including v_lr and steps if applicable
-        cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}"
-        # if v_lr is not None:
-        #     cache_zs_file += f"-vlr{v_lr}"
-        # if steps is not None:
-        #     cache_zs_file += f"-steps{steps}"
-        # if weight_decay is not None:
-        #     cache_zs_file += f"-wd{weight_decay}"
-        # if kl_factor is not None:
-        #     cache_zs_file += f"-kl{kl_factor}"
-        # if clamp_factor is not None:
-        #     cache_zs_file += f"-clamp{clamp_factor}"
-        cache_zs_file += f"-layer{layer}.pt"
+    print(f"\nLoading full z cache for MEMIT...")
+    cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{z_layer}.pt"
     
-        if os.path.isfile(cache_zs_file):
-            zs_full = torch.load(cache_zs_file, map_location='cpu')  # [hidden_dim, num_all_samples]
-            print(f"Loaded full z cache from {cache_zs_file}, shape: {zs_full.shape}")
-            zs_all[layer] = zs_full
-            
-            # Validate that cache contains enough samples
-            num_cached_samples = zs_full.shape[1]
-            num_required_samples = len(requests)
-            if num_cached_samples < num_required_samples:
-                raise ValueError(
-                    f"Insufficient cached z samples! "
-                    f"Required: {num_required_samples}, Cached: {num_cached_samples}. "
-                    f"Please pre-compute z for at least {num_required_samples} samples using precompute_z.py"
-                )
-            print(f"✓ Cache validation passed: {num_cached_samples} samples available, {num_required_samples} required")
-        else:
-            raise FileNotFoundError(f"Cache file not found: {cache_zs_file}. Please ensure the cache file exists before running.")
+    if os.path.isfile(cache_zs_file):
+        zs_full = torch.load(cache_zs_file, map_location='cpu')  # [hidden_dim, num_all_samples]
+        print(f"Loaded full z cache from {cache_zs_file}, shape: {zs_full.shape}")
+        
+        # Validate that cache contains enough samples
+        num_cached_samples = zs_full.shape[1]
+        num_required_samples = len(requests)
+        if num_cached_samples < num_required_samples:
+            raise ValueError(
+                f"Insufficient cached z samples! "
+                f"Required: {num_required_samples}, Cached: {num_cached_samples}. "
+                f"Please pre-compute z for at least {num_required_samples} samples using precompute_z.py"
+            )
+        print(f"✓ Cache validation passed: {num_cached_samples} samples available, {num_required_samples} required")
+    else:
+        raise FileNotFoundError(f"Cache file not found: {cache_zs_file}. Please ensure the cache file exists before running.")
     
     for requests_chunks in chunks(requests, cfg.bs):
-        batch_edit(cfg,model,tok,requests_chunks,device,cache_c,zs_all)
+        batch_edit(cfg,model,tok,requests_chunks,device,cache_c,zs_full,z_layer)
     return model
 
-def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
+def batch_edit(cfg, model, tok, requests, device, cache_c, zs_full, z_layer):
     """
     Edit model weights for a batch of requests.
     
     Args:
-        zs_all: Dictionary of full z cache tensors per layer, loaded once for all batches
+        zs_full: Full z cache tensor [hidden_dim, num_all_samples], loaded once for all batches
+        z_layer: The layer number where z is computed
     """
     # Retrieve weights that user desires to change
     weights = {
@@ -188,17 +168,17 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
     sample_indices = [req["sample_idx"] for req in requests]
     
     # Safety check: ensure all indices are within bounds
-    max_cached_idx = max(zs_all[layer].shape[1] for layer in zs_all) - 1
+    max_cached_idx = zs_full.shape[1] - 1
     max_requested_idx = max(sample_indices)
     if max_requested_idx > max_cached_idx:
         raise IndexError(
             f"Sample index out of bounds! "
             f"Requested index: {max_requested_idx}, Max cached index: {max_cached_idx}. "
-            f"Cache shape: {zs_all[layer].shape}"
+            f"Cache shape: {zs_full.shape}"
         )
     
-    zs = {layer: zs_all[layer][:, sample_indices].to(device) for layer in zs_all}  # [hidden_dim, current_batch_size]
-    print(f"Extracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shapes: {[zs[layer].shape for layer in zs]}")
+    zs = zs_full[:, sample_indices].to(device)  # [hidden_dim, current_batch_size]
+    print(f"Extracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shape: {zs.shape}")
     
     # ========== Original computation logic (archived for reference) ==========
     # This was the old approach that computed z on-the-fly for each batch.
@@ -254,7 +234,7 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                layer, # 要求的是当前层的输出，而不是z_layer
+                z_layer,
                 context_templates=[request["negetive_prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
                 module_template=cfg.llms.layer_module_tmp,
@@ -265,14 +245,13 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                layer, # 注意这里是layer，不是z_layer
+                z_layer,
                 context_templates=[request["prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
                 module_template=cfg.llms.layer_module_tmp,
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
-
-        targets = zs[layer] - cur_zs#[dim,bs]
+        targets = zs - cur_zs#[dim,bs]
         print("z error", torch.linalg.norm(targets, dim=0).mean())
 
         repeat_factor = (layer_ks.size(1) // targets.size(1))
@@ -282,8 +261,10 @@ def batch_edit(cfg, model, tok, requests, device, cache_c, zs_all):
             layer_ks.double(),
             targets.double()
         )
-        # resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
-        resid = targets  # Do not distribute residual across layers
+        resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
+        # resid = targets  # Do not distribute residual across layers, for MEMIT, try to compare non-distributed version with distributed version of MEMIT.
+        # print(f"You are using non-distribution to deal with target!")
+        print("Distribution version")
 
         cov = covs[i].double()
 

@@ -1,15 +1,19 @@
 """
-MEMIT with Hidden State Extraction (3-memit_main.py)
-Use to extract hidden states under the MEMIT method
+MEMIT with Per-Layer Z and Hidden State Extraction (4-memit_main.py)
+Use to extract hidden states under the MEMIT+FE method
 
-This variant extracts hidden states before and after editing:
+This variant combines:
+- Per-layer z from 2-memit (each layer uses its own z_firstforward)
+- Hidden state extraction from 3-memit
+
+Extracts hidden states before and after editing:
 - h_pre_original^i: Output of layer i from original model (no edits at all)
-- h_pre^i: Output of layer i before editing
-- h_pre^last: Output of last edit layer before editing
-- h_post^i: Output of layer i after editing
-- h_post^last: Output of last edit layer after editing
+- h_pre_current^i: Output of layer i before editing (with layers 0..i-1 already edited)
+- h_pre_last_at_layer^i: Output of last edit layer before editing layer i
+- h_post_current^i: Output of layer i after editing
+- h_post_last_at_layer^i: Output of last edit layer after editing layer i
 
-All hidden states are saved in format compatible with precompute_z.py for easy comparison.
+Key difference from 3-memit: Uses per-layer z instead of unified z.
 """
 
 import os
@@ -37,6 +41,10 @@ covs = []  # Store K0K0T covariance matrices
 
 def load_cov(cfg, model, tok):
     """Load covariance matrices for all layers."""
+    global covs
+    # Important: `covs` is a module-level cache. Clear it to avoid accumulating
+    # covariances across multiple runs (which would misalign layer indices).
+    covs = []
     layers = cfg.llms.layers
     for i, layer in enumerate(layers):
         cov = get_cov(
@@ -150,7 +158,7 @@ def apply_memit_to_model(
     cfg: DictConfig
 ):
     """
-    Apply MEMIT to model and extract hidden states before/after editing.
+    Apply MEMIT with per-layer z to model and extract hidden states before/after editing.
     
     Returns:
         model: The updated model
@@ -191,46 +199,47 @@ def apply_memit_to_model(
     fc_dim = get_fc_dim(model, cfg)
     cache_c = torch.zeros((len(layers), fc_dim, fc_dim), device="cpu")
     
-    # Load z cache
+    # Load per-layer z cache (key difference from 3-memit)
     model_cache_name = cfg.llms.name.replace("/", "-")
     dataset_name = getattr(cfg, 'data', 'unknown')
     seed_value = getattr(cfg, 'seed', 0)
-    z_method = "all"
-    z_layer = cfg.llms.layers[-1]
-    
-    print(f"\nLoading full z cache for MEMIT...")
-    cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{z_layer}.pt"
-    
-    if os.path.isfile(cache_zs_file):
-        zs_full = torch.load(cache_zs_file, map_location='cpu')
-        print(f"Loaded full z cache from {cache_zs_file}, shape: {zs_full.shape}")
+    z_method = "firstforward"  # Per-layer z method
+
+    zs_all = {layer: None for layer in cfg.llms.layers}
+
+    print(f"\nLoading per-layer z cache for MEMIT (z_method={z_method})...")
+    for layer in cfg.llms.layers:
+        cache_zs_file = f"{cfg.zs_cache_dir}/{dataset_name}-{model_cache_name}-{z_method}-seed{seed_value}-layer{layer}.pt"
         
-        num_cached_samples = zs_full.shape[1]
-        num_required_samples = len(requests)
-        if num_cached_samples < num_required_samples:
-            raise ValueError(
-                f"Insufficient cached z samples! "
-                f"Required: {num_required_samples}, Cached: {num_cached_samples}. "
-                f"Please pre-compute z for at least {num_required_samples} samples using precompute_z.py"
-            )
-        print(f"✓ Cache validation passed: {num_cached_samples} samples available, {num_required_samples} required")
-    else:
-        raise FileNotFoundError(f"Cache file not found: {cache_zs_file}. Please ensure the cache file exists before running.")
+        if os.path.isfile(cache_zs_file):
+            zs_full = torch.load(cache_zs_file, map_location='cpu')
+            print(f"Loaded z cache for layer {layer} from {cache_zs_file}, shape: {zs_full.shape}")
+            zs_all[layer] = zs_full
+            
+            num_cached_samples = zs_full.shape[1]
+            num_required_samples = len(requests)
+            if num_cached_samples < num_required_samples:
+                raise ValueError(
+                    f"Insufficient cached z samples for layer {layer}! "
+                    f"Required: {num_required_samples}, Cached: {num_cached_samples}. "
+                    f"Please pre-compute z for at least {num_required_samples} samples using precompute_z.py"
+                )
+            print(f"✓ Cache validation passed for layer {layer}: {num_cached_samples} samples available, {num_required_samples} required")
+        else:
+            raise FileNotFoundError(f"Cache file not found: {cache_zs_file}. Please ensure the cache file exists before running.")
     
     # Initialize storage for layer-by-layer extraction
-    # For each edit layer i: h_pre_i, h_pre_last_at_i, h_post_i, h_post_last_at_i
-    h_pre_current_all = {layer: [] for layer in layers}  # h before editing layer i
-    h_pre_last_at_layer = {layer: [] for layer in layers}  # last layer output before editing layer i
-    h_post_current_all = {layer: [] for layer in layers}  # h after editing layer i
-    h_post_last_at_layer = {layer: [] for layer in layers}  # last layer output after editing layer i
+    h_pre_current_all = {layer: [] for layer in layers}
+    h_pre_last_at_layer = {layer: [] for layer in layers}
+    h_post_current_all = {layer: [] for layer in layers}
+    h_post_last_at_layer = {layer: [] for layer in layers}
     
-    # NEW: Extract h from ORIGINAL model (before any edits) for cumulative effect analysis
+    # Extract h from ORIGINAL model (before any edits)
     print(f"\n{'='*80}")
     print(f"EXTRACTING HIDDEN STATES FROM ORIGINAL MODEL (BEFORE ANY EDITS)")
     print(f"{'='*80}")
-    h_pre_original_all = {layer: [] for layer in layers}  # Original model output for each layer
+    h_pre_original_all = {layer: [] for layer in layers}
     
-    # Extract original model outputs for ALL samples BEFORE any editing
     print(f"\nExtracting h_pre_original from completely unedited model for all samples...")
     for requests_chunks in chunks(requests, cfg.bs):
         h_original_batch = extract_hidden_states(
@@ -245,10 +254,10 @@ def apply_memit_to_model(
         print(f"  h_pre_original[{layer}] shape: {h_pre_original_all[layer].shape}")
     
     # Process in batches for editing
-    print(f"\nProcessing batches for layer-by-layer editing...")
+    print(f"\nProcessing batches for layer-by-layer editing with per-layer z...")
     for requests_chunks in chunks(requests, cfg.bs):
         batch_results = batch_edit_layerwise(
-            cfg, model, tok, requests_chunks, device, cache_c, zs_full, z_layer, layers, last_layer
+            cfg, model, tok, requests_chunks, device, cache_c, zs_all, layers, last_layer
         )
         
         # Collect results for each layer
@@ -258,7 +267,7 @@ def apply_memit_to_model(
             h_post_current_all[layer].append(batch_results['h_post_current'][layer])
             h_post_last_at_layer[layer].append(batch_results['h_post_last_at_layer'][layer])
     
-    # Concatenate edited batches (h_pre_original already concatenated above)
+    # Concatenate edited batches
     print(f"\nConcatenating hidden states from editing batches...")
     for layer in layers:
         h_pre_current_all[layer] = torch.cat(h_pre_current_all[layer], dim=1)
@@ -274,7 +283,7 @@ def apply_memit_to_model(
     h_cache_dir = cfg.get('h_cache_dir', './h_cache')
     os.makedirs(h_cache_dir, exist_ok=True)
     
-    # Save hidden states for each layer (before and after editing that layer)
+    # Save hidden states for each layer
     for layer in layers:
         # h_pre_original: layer i output from ORIGINAL model (completely unedited)
         print(f"Saving h_pre_original for layer {layer}, shape: {h_pre_original_all[layer].shape}")
@@ -323,15 +332,12 @@ def apply_memit_to_model(
 
 
 def batch_edit_layerwise(
-    cfg, model, tok, requests, device, cache_c, zs_full, z_layer, layers, last_layer
+    cfg, model, tok, requests, device, cache_c, zs_all, layers, last_layer
 ) -> Dict:
     """
-    Edit model weights layer-by-layer and extract hidden states after each edit.
+    Edit model weights layer-by-layer using per-layer z and extract hidden states.
     
-    For each layer i being edited:
-    - Extract h_pre_i and h_pre_last BEFORE editing layer i (with layers 0..i-1 already edited)
-    - Apply edit to layer i
-    - Extract h_post_i and h_post_last AFTER editing layer i (cumulative effect of layers 0..i)
+    Key difference from 3-memit: Each layer uses its own z vector (firstforward method).
     
     Returns:
         {
@@ -350,19 +356,20 @@ def batch_edit_layerwise(
     }
     context_templates = get_context_templates(model, tok)
     
-    # Extract z for current batch by sample indices
+    # Extract z for current batch by sample indices (per-layer z)
     sample_indices = [req["sample_idx"] for req in requests]
-    max_cached_idx = zs_full.shape[1] - 1
+    max_cached_idx = max(zs_all[layer].shape[1] for layer in zs_all) - 1
     max_requested_idx = max(sample_indices)
     if max_requested_idx > max_cached_idx:
         raise IndexError(
             f"Sample index out of bounds! "
-            f"Requested index: {max_requested_idx}, Max cached index: {max_cached_idx}. "
-            f"Cache shape: {zs_full.shape}"
+            f"Requested index: {max_requested_idx}, Max cached index: {max_cached_idx}."
         )
     
-    zs = zs_full[:, sample_indices].to(device)  # [hidden_dim, current_batch_size]
-    print(f"Extracted z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}, shape: {zs.shape}")
+    zs = {layer: zs_all[layer][:, sample_indices].to(device) for layer in zs_all}
+    print(f"Extracted per-layer z for batch indices {sample_indices[:5]}{'...' if len(sample_indices) > 5 else ''}")
+    for layer in layers:
+        print(f"  z[{layer}] shape: {zs[layer].shape}")
     
     # Initialize result storage
     result = {
@@ -372,9 +379,9 @@ def batch_edit_layerwise(
         'h_post_last_at_layer': {}
     }
     
-    # ========== Layer-by-layer editing with extraction ==========
+    # Layer-by-layer editing with extraction
     print(f"\n{'='*80}")
-    print(f"LAYER-BY-LAYER EDITING WITH HIDDEN STATE EXTRACTION")
+    print(f"LAYER-BY-LAYER EDITING WITH HIDDEN STATE EXTRACTION (PER-LAYER Z)")
     print(f"{'='*80}")
     
     for i, layer in enumerate(cfg.llms.layers):
@@ -382,7 +389,7 @@ def batch_edit_layerwise(
         print(f"PROCESSING LAYER {layer} ({i+1}/{len(cfg.llms.layers)})")
         print(f"{'='*80}")
         
-        # ===== Extract h BEFORE editing current layer =====
+        # Extract h BEFORE editing current layer
         print(f"\n[BEFORE EDIT] Extracting h for layer {layer} and last layer {last_layer}")
         extraction_layers = [layer, last_layer] if layer != last_layer else [layer]
         h_before = extract_hidden_states(model, tok, requests, cfg, extraction_layers, device)
@@ -392,8 +399,8 @@ def batch_edit_layerwise(
         print(f"  ✓ h_pre_current[{layer}] shape: {result['h_pre_current'][layer].shape}")
         print(f"  ✓ h_pre_last_at_layer[{layer}] shape: {result['h_pre_last_at_layer'][layer].shape}")
         
-        # ===== Apply MEMIT edit to current layer =====
-        print(f"\n[EDITING] Applying MEMIT to layer {layer}")
+        # Apply MEMIT edit to current layer (using per-layer z)
+        print(f"\n[EDITING] Applying MEMIT to layer {layer} with per-layer z")
         
         # Get current model activations
         layer_ks = compute_ks(model, tok, requests, cfg, layer, context_templates).T
@@ -403,7 +410,7 @@ def batch_edit_layerwise(
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                z_layer,
+                layer,  # Current layer (not z_layer)
                 context_templates=[request["negetive_prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
                 module_template=cfg.llms.layer_module_tmp,
@@ -413,14 +420,15 @@ def batch_edit_layerwise(
             cur_zs = get_module_input_output_at_words(
                 model,
                 tok,
-                z_layer,
+                layer,  # Current layer (not z_layer)
                 context_templates=[request["prompt"] for request in requests],
                 words=[request["subject"] for request in requests],
                 module_template=cfg.llms.layer_module_tmp,
                 fact_token_strategy=cfg.llms.fact_token,
             )[1].T
         
-        targets = zs - cur_zs  # [dim, bs]
+        # Use per-layer z (key difference from 3-memit)
+        targets = zs[layer] - cur_zs  # [dim, bs]
         print(f"  z error: {torch.linalg.norm(targets, dim=0).mean():.4f}")
         
         repeat_factor = (layer_ks.size(1) // targets.size(1))
@@ -430,8 +438,7 @@ def batch_edit_layerwise(
             layer_ks.double(),
             targets.double()
         )
-        resid = targets / (len(cfg.llms.layers) - i)  # Distribute residual across layers
-        # resid = targets  # Apply full residual at each layer, this residual is calculated based on the target of the last edit layer, this time we do not divide it by the number of layers for comparison.
+        resid = targets  # Do not distribute residual across layers (2-memit style)
         
         cov = covs[i].double()
         
@@ -456,7 +463,7 @@ def batch_edit_layerwise(
         with torch.no_grad():
             weights[weight_name][...] = weights[weight_name] + upd_matrix
         
-        # ===== Extract h AFTER editing current layer =====
+        # Extract h AFTER editing current layer
         print(f"\n[AFTER EDIT] Extracting h for layer {layer} and last layer {last_layer}")
         h_after = extract_hidden_states(model, tok, requests, cfg, extraction_layers, device)
         

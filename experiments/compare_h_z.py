@@ -1,12 +1,35 @@
 """
 Compare hidden states (h) with target z vectors.
 
-Implements two key experiments:
+Implements four key experiments:
 1. Update ratio: ||h_post_i - z_i|| / ||h_pre_i - z_i||
-   - Measures how much closer we get to ideal state after editing
+   - Measures how much closer we get to ideal state after editing 
+   - for each layer i
+   - z_i is the target vector for layer i, computed using specified method
    
 2. Cosine similarity: cos(z_last - h_pre_i_last, h_post_i_last - h_pre_i_last)
    - Measures alignment between edit direction and ideal direction
+
+3. Update ration: ||h_post_last_at_i - z_last|| / ||h_pre_original_last - z_last||
+    (cumulative edit direction)/(ideal direction at last layer before any edits)
+    - Measures cumulative effect of edits up to layer i on the last edited layer
+    - z_last is the target vector for the last edited layer
+    - h_pre_original_last is the hidden state at last layer before any edits
+    - h_post_last_at_i is the hidden state at last layer after edits up to layer i
+    - Output should be % that is monotonically decreasing as i increases, e.g. 80% means the last layer is 80% as far from z_last as the original model
+
+3+. Directional cosine similarity: cos(a,b)
+    - a = z_last - h_pre_original_last
+        (ideal direction at last layer)
+    - b = h_post_last_at_i - h_pre_original_last
+        (cumulative edit direction at last layer after edits up to i)
+
+4. Cosine similarity: cos(a, b)
+     - a = h_post_current_i - h_pre_current_i
+         (local change at edited layer i)
+     - b = h_post_last_at_i - h_pre_last_at_i
+         (downstream change at the last edited layer caused by editing i)
+     - Measures whether a layer's local update direction aligns with its effect on the last edited layer.
 
 Results are saved to JSON with detailed per-sample information for visualization.
 """
@@ -172,6 +195,7 @@ def main():
         'experiment1b_update_ratio_cumulative_current': {},  # per layer (cumulative effect on current layer)
         'experiment2_cosine_similarity': {},  # per layer (incremental direction)
         'experiment3_cumulative_effect': {},  # per layer (cumulative effect on last layer)
+        'experiment4_propagation_alignment': {},  # per layer: cos(local change, downstream change)
     }
     
     # Load z for last layer (target)
@@ -317,10 +341,8 @@ def main():
     print(f"{'='*80}")
     print(f"Evaluates whether cumulative editing progressively moves last layer closer to z_last")
     
-    # Load h_pre_original for last layer (use layer[0]'s h_pre_original since it's the original model)
-    # Actually, we need h_pre_original[last_layer]
     print(f"\nLoading h_pre_original for last layer {last_layer}...")
-    h_pre_original_last = load_h_cache(args.h_cache_dir, args.dataset, args.model, 'h_pre_original', last_layer, args.seed)
+    h_pre_original_last = load_h_cache(args.h_cache_dir, args.dataset, args.model, 'h_pre_original', last_layer, args.seed) # Load h_pre_original_last, which is the hidden state at last layer before any edits
     print(f"h_pre_original_last shape: {h_pre_original_last.shape}")
     
     # Compute ideal direction (fixed for all layers)
@@ -391,6 +413,64 @@ def main():
             'cosine_similarity_statistics': cosine_stats,
             'per_sample_distance_ratios': dist_ratios.tolist(),
             'per_sample_cosine_similarities': cosine_sims.tolist(),
+        }
+
+    # ==================================================
+    # EXPERIMENT 4: Propagation Alignment (Local vs Downstream)
+    # ==================================================
+    print(f"\n{'='*80}")
+    print(f"EXPERIMENT 4: Propagation Alignment (Local vs Downstream)")
+    print(f"{'='*80}")
+    print(f"Metric: cos(a, b)")
+    print(f"  a = h_post_current_i - h_pre_current_i")
+    print(f"  b = h_post_last_at_i - h_pre_last_at_i")
+    print(f"Interpretation: high cosine => local change aligns with downstream effect")
+
+    for layer in tqdm(layers, desc="Processing layers"):
+        print(f"\n--- Layer {layer} ---")
+
+        h_pre_current = load_h_cache(args.h_cache_dir, args.dataset, args.model, 'h_pre_current', layer, args.seed)
+        h_post_current = load_h_cache(args.h_cache_dir, args.dataset, args.model, 'h_post_current', layer, args.seed)
+
+        h_pre_last_at_i = load_h_cache(args.h_cache_dir, args.dataset, args.model, 'h_pre_last_at_layer', layer, args.seed)
+        h_post_last_at_i = load_h_cache(args.h_cache_dir, args.dataset, args.model, 'h_post_last_at_layer', layer, args.seed)
+
+        if h_pre_current.shape != h_post_current.shape:
+            raise ValueError(
+                f"Shape mismatch at layer {layer} for current-layer tensors: "
+                f"{h_pre_current.shape} vs {h_post_current.shape}"
+            )
+        if h_pre_last_at_i.shape != h_post_last_at_i.shape:
+            raise ValueError(
+                f"Shape mismatch at layer {layer} for last-at-i tensors: "
+                f"{h_pre_last_at_i.shape} vs {h_post_last_at_i.shape}"
+            )
+        if h_pre_current.shape[1] != h_pre_last_at_i.shape[1]:
+            raise ValueError(
+                f"Num_samples mismatch at layer {layer}: current={h_pre_current.shape[1]} "
+                f"last_at_i={h_pre_last_at_i.shape[1]}"
+            )
+
+        a = h_post_current - h_pre_current
+        b = h_post_last_at_i - h_pre_last_at_i
+
+        similarities, stats = compute_cosine_similarity(a, b)
+
+        print(f"\n  Propagation Alignment Cosine Statistics:")
+        print(f"    Mean:   {stats['mean']:.4f}")
+        print(f"    Std:    {stats['std']:.4f}")
+        print(f"    Median: {stats['median']:.4f}")
+        print(f"    Min:    {stats['min']:.4f}")
+        print(f"    Max:    {stats['max']:.4f}")
+        print(f"    Q25:    {stats['q25']:.4f}")
+        print(f"    Q75:    {stats['q75']:.4f}")
+        print(f"    Positive alignment (>0): {stats['num_positive']}/{num_samples}")
+        print(f"    Well-aligned (>0.5): {int((similarities > 0.5).sum())}/{num_samples} ({stats['alignment_rate']:.2f}%)")
+        print(f"    Negative alignment (<0): {stats['num_negative']}/{num_samples}")
+
+        results['experiment4_propagation_alignment'][f'layer_{layer}'] = {
+            'statistics': stats,
+            'per_sample_similarities': similarities.tolist(),
         }
     
     # ==================================================
@@ -470,6 +550,18 @@ def main():
             cos_stats = results['experiment3_cumulative_effect'][f'layer_{layer}']['cosine_similarity_statistics']
             f.write(f"{layer:<10} {dist_stats['mean']:<12.4f} {dist_stats['improvement_rate']:<12.2f} "
                    f"{cos_stats['mean']:<12.4f} {cos_stats['alignment_rate']:<12.2f}\n")
+
+        f.write(f"\n{'='*80}\n")
+        f.write(f"EXPERIMENT 4: Propagation Alignment (Local vs Downstream)\n")
+        f.write(f"cos(a, b), a=\u0394h at layer i, b=\u0394h at last edited layer due to editing i\n")
+        f.write(f"Meaning: high cosine => local update direction aligns with downstream effect\n")
+        f.write(f"{'='*80}\n\n")
+        f.write(f"{'Layer':<10} {'Mean':<10} {'Median':<10} {'Aligned%':<12} {'Min':<10} {'Max':<10}\n")
+        f.write(f"{'-'*70}\n")
+        for layer in layers:
+            stats = results['experiment4_propagation_alignment'][f'layer_{layer}']['statistics']
+            f.write(f"{layer:<10} {stats['mean']:<10.4f} {stats['median']:<10.4f} "
+                   f"{stats['alignment_rate']:<12.2f} {stats['min']:<10.4f} {stats['max']:<10.4f}\n")
     
     print(f"✓ Summary report saved to: {summary_path}")
     
@@ -508,6 +600,18 @@ def main():
     for layer in layers:
         cos_stats = results['experiment3_cumulative_effect'][f'layer_{layer}']['cosine_similarity_statistics']
         print(f"    Layer {layer}: {cos_stats['mean']:.4f} (aligned: {cos_stats['alignment_rate']:.1f}%)")
+
+    print(f"\nEXPERIMENT 4: Propagation Alignment (Local vs Downstream)")
+    avg_propagation_alignment_rate = np.mean([
+        results['experiment4_propagation_alignment'][f'layer_{layer}']['statistics']['alignment_rate']
+        for layer in layers
+    ])
+    avg_propagation_alignment_mean = np.mean([
+        results['experiment4_propagation_alignment'][f'layer_{layer}']['statistics']['mean']
+        for layer in layers
+    ])
+    print(f"  Average alignment rate (>0.5): {avg_propagation_alignment_rate:.2f}%")
+    print(f"  Average cosine mean: {avg_propagation_alignment_mean:.4f}")
     
     print(f"\n{'='*80}")
     print(f"DONE!")

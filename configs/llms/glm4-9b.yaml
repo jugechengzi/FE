@@ -2,11 +2,20 @@ name: THUDM/glm-4-9b-chat
 
 fact_token: subject_last
 
-clamp_norm_factor: 0.75
-v_num_grad_steps: 25
-v_lr: 0.1
+#### for LTI start ####
+mid_kl_factor: 0.0425
+last_kl_factor: 0.0625
+nll_factor: 1
+midlayers:
+  - 15
+constr_pos: subject
+#### for LTI end ####
+
+clamp_norm_factor: 10
+v_num_grad_steps: 50
+v_lr: 5e-1
 v_loss_layer: 39
-v_weight_decay: 0.5
+v_weight_decay: 1e-3
 kl_factor: 0.0625
 
 layers:

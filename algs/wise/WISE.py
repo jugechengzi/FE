@@ -369,7 +369,8 @@ class WISEAdapter(torch.nn.Module):
         self.original_layer = copy.deepcopy(self.layer)
         self.memory_weight = []
         self.memory_mean_act = []
-        self.bias = None
+        # Preserve original bias when present (e.g., GPT-2 uses Conv1D with bias).
+        self.bias = layer.bias if hasattr(layer, "bias") else None
         self.merge_cnt = 0  # only for retrieve
         assert not self.weight.requires_grad, print('Original Layer can not be tunable....')
 
@@ -456,8 +457,43 @@ class WISEAdapter(torch.nn.Module):
         self.used_mask[chosen_indices] = True  # 更新遮罩状态
         self.weight_mask = torch.from_numpy(mask_array).to(p_grad.device)
 
+    def _weight_forward(self, input: Tensor, weight: Tensor) -> Tensor:
+        # GPT-2 MLP uses a Conv1D module where weight is stored as [in, out].
+        # torch.nn.functional.linear expects weight as [out, in].
+        if hasattr(self.layer, "nf"):
+            in_features = input.size(-1)
+            out_features = self.layer.nf
+
+            # Some merge/checkpoint paths may store weights transposed; handle both.
+            if tuple(weight.shape) == (out_features, in_features):
+                return F.linear(input, weight, self.bias)
+            if tuple(weight.shape) != (in_features, out_features):
+                raise RuntimeError(
+                    f"WISEAdapter Conv1D weight has unexpected shape {tuple(weight.shape)}; "
+                    f"expected ({in_features}, {out_features}) or ({out_features}, {in_features})."
+                )
+
+            if self.bias is None:
+                return torch.matmul(input, weight).view(input.size()[:-1] + (out_features,))
+            return torch.addmm(
+                self.bias,
+                input.view(-1, in_features),
+                weight,
+            ).view(input.size()[:-1] + (out_features,))
+
+        # Standard Linear-like modules: weight is [out, in], but be tolerant of [in, out].
+        in_features = input.size(-1)
+        if weight.dim() == 2 and weight.size(-1) == in_features:
+            return F.linear(input, weight, self.bias)
+        if weight.dim() == 2 and weight.size(0) == in_features:
+            return F.linear(input, weight.t(), self.bias)
+        raise RuntimeError(
+            f"WISEAdapter Linear weight has unexpected shape {tuple(weight.shape)}; "
+            f"input last-dim is {in_features}."
+        )
+
     def new_weight_forward(self, input: Tensor) -> Tensor:
-        return F.linear(input, self.new_weight) if self.bias is None else torch.addmm(self.bias, input.view(-1, input.size(-1)), self.new_weight).view(input.size()[:-1] + (self.layer.nf,))
+        return self._weight_forward(input, self.new_weight)
 
     def mask_new_weight_gradient(self):
         assert self.new_weight.grad is not None, print('Gradient Collection for New Weight error, gradient not found')
@@ -511,7 +547,7 @@ class WISEAdapter(torch.nn.Module):
 
                 for i in range(len(self.memory_weight)):
                     memory_retrieve_weight = self.memory_weight[i]
-                    memory_weight_layer_output = F.linear(*args, memory_retrieve_weight)
+                    memory_weight_layer_output = self._weight_forward(args[0], memory_retrieve_weight)
                     dist = euc(original_layer_output, memory_weight_layer_output, self.config, infer=True)
                     if dist > min_dist and dist > self.memory_mean_act[i].min_act() * self.config.act_ratio:
                         layer_out = memory_weight_layer_output

@@ -21,21 +21,32 @@ def get_topk_overlap_count(logits1, logits2, k):
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(cfg):
     data = "multi_counterfact_20877"
-    # data = "zsre_mend_eval_19086"
+    data = "zsre_mend_eval_19086"
 
     # model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
     # model_name = "Qwen/Qwen2.5-7B-Instruct"
     print("Evaluating locality for model {}".format(cfg.llms.name))
 
-    # algs = ["wise", "rledit","memit","adaedit","alphaedit","emmet","namet","pmet","prune","rect"]
-    algs = ["memit"]
+    # algs = ["adaedit","alphaedit","emmet","namet","pmet","prune","rect"]
+    algs = ["wise"]
+    # algs = ['namet']
+    # algs = ["alphaedit"]
+    # algs = [ "prune", "rect" ]
 
     print("Evaluating method {}".format(algs))
 
     # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in [ "2500","5000", "7500", "10000", "12500", "17500", "20000", "22500", "25000", "27500", "30000"]]
     # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in ["1.5e2","1.5e3", "1.5e4","1.5e5", "1.5e6"]]
-    # save_names = [f"{x}cov-bs2000-neighborhood-logits" for x in [ "1.5e4"]]
-    save_names = [f"{x}-{_lambda}-bs2000-neighborhood-logits" for x in ["z","t","a"] for _lambda in ["1.5e4"]]
+    save_names = [f"{y}-{x}cov-bs2000-neighborhood-logits" for y in ["t"] for x in [ "1.5e4"]]
+    # save_names = [f"{x}-{_lambda}-bs2000-neighborhood-logits" for x in ["z","t","r","blue","a"] for _lambda in ["1.5e4"]]
+    # save_names = [f"a-{x}e4-bs2000-vlr0.1-steps80-wd0.5-kl0.0625-clamp0.75-neighborhood-logits" for x in ["0.5","1","1.5"]]
+
+
+    # save_names = [f"a-1e4-batch2000-vlr0.1-steps80-neighborhood-logits",f"a-1e4-batch2000-vlr0.05-steps100-neighborhood-logits"]
+    # save_names = [f"a-1e4-batch2000-vlr0.05-steps100-neighborhood-logits",f"a-1e4-batch2000-vlr0.03-steps120-neighborhood-logits"]
+
+
+    print("Evaluating dataset: {}".format(data))
 
     for alg in algs:
         print("\n")

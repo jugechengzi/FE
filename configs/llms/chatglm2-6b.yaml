@@ -12,7 +12,7 @@ constr_pos: subject
 fact_token: subject_last
 
 clamp_norm_factor: 4
-v_num_grad_steps: 25
+v_num_grad_steps: 35
 v_lr: 5e-1
 v_loss_layer: 27
 v_weight_decay: 1e-3

@@ -173,7 +173,16 @@ def get_reprs_at_idxs(
 
     def _process(cur_repr, batch_idxs, key):
         nonlocal to_return
-        cur_repr = cur_repr[0] if type(cur_repr) is tuple else cur_repr
+
+        if type(cur_repr) is tuple:
+            if len(cur_repr) > 0:
+                cur_repr = cur_repr[0] if type(cur_repr) is tuple else cur_repr
+            else:
+                print(f"[DEBUG] Layer/Module output is empty! type_str: {key}, module_name: {module_name}")
+                raise ValueError("Empty tuple representation encountered.")
+                return None
+
+
         if cur_repr.shape[0]!=len(batch_idxs):
             cur_repr=cur_repr.transpose(0,1)
         for i, idx_list in enumerate(batch_idxs):
@@ -195,7 +204,8 @@ def get_reprs_at_idxs(
                 model(**contexts_tok)
 
         if tin:
-            if isinstance(model, GPTJForCausalLM) and module_name == 'transformer.h.8':
+            # if isinstance(model, GPTJForCausalLM) and module_name == 'transformer.h.8':
+            if isinstance(model, GPTJForCausalLM) and module_name in ['transformer.h.3', 'transformer.h.4', 'transformer.h.5', 'transformer.h.6', 'transformer.h.7', 'transformer.h.8']:
                 with torch.no_grad():
                     with nethook.Trace(
                         module=model,
