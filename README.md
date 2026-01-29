@@ -1,4 +1,4 @@
-This repository provides tools for large-scale model editing using the MEMIT algorithm and our proposed FE-MEMIT method.
+This repository provides tools for large-scale model editing using the MEMIT algorithm and our proposed FE method.
 
 # Quick Start Guide
 
