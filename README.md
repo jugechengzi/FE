@@ -58,14 +58,7 @@ After the model is edited, evaluate its performance on the target facts and its 
 python main.py algs=${ALGO} llms=${MODEL} data=${DATASET} test_only=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}"
 
 # Neighbourhood Logits Generation
-python main.py
-algs=${ALGO}
-llms=${MODEL}
-data=${DATASET}
-test_only=True
-neighborhood_logits=True
-load_name="${MODEL_NAME}"
-save_name="${MODEL_NAME}-neighborhood-logits"
+python main.py algs=${ALGO} llms=${MODEL} data=${DATASET} test_only=True neighborhood_logits=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}-neighborhood-logits"
 
 # Locality Test
 python experiments/locality_exp_kl.py
