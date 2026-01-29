@@ -1,6 +1,6 @@
 defaults:
   - algs: memit
-  - llms: gpt-j-6b # gpt2-xl # qwen2-7b # mistral-7b # chatglm2-6b #baichuan-7b # qwen2.5-7b  llama3-8b
+  - llms: llama3-8b # gpt2-xl # qwen2-7b # mistral-7b # chatglm2-6b #baichuan-7b # qwen2.5-7b  llama3-8b
 
 
 gpu: 0
