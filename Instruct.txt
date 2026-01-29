@@ -1,0 +1,14 @@
+DATASET=multi_counterfact_20877
+ALGO=memit
+MODEL=llama3-8b
+bs=2000
+num_edits=2000
+MODEL_NAME="NAME_TO_STORE"
+
+python -u main.py algs=${ALGO} llms=${MODEL} data=${DATASET} save_name="${MODEL_NAME}" num_edits=${num_edits} bs=${bs} 
+
+python main.py algs=${ALGO} llms=${MODEL} data=${DATASET} test_only=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}"
+
+python -u main.py algs=${ALGO} llms=${MODEL} data=${DATASET} test_only=True neighborhood_logits=True load_name="${MODEL_NAME}" save_name="${MODEL_NAME}-neighborhood-logits"
+
+
