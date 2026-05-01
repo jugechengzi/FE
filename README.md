@@ -1,3 +1,5 @@
+Official code for the ICML 2026 Paper: From Backward Spreading to Forward Replay: Revisiting Target Construction in LLM Parameter Editing
+
 This repository provides tools for large-scale model editing using the MEMIT algorithm and our proposed FE method.
 
 # Quick Start Guide
