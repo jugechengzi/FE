@@ -2,6 +2,8 @@ Official code for the ICML 2026 Paper: From Backward Spreading to Forward Replay
 
 This repository provides tools for large-scale model editing using the MEMIT algorithm and our proposed FE method.
 
+Notes: for most LLMs, the hyperparameter "clamp_norm_factor" of FE should be smaller than that of MEMIT.
+
 # Quick Start Guide
 
 To run a complete editing pipeline, follow these steps in order. This example demonstrates how to precompute targets and then execute the edit.
